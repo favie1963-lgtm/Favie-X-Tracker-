@@ -1,0 +1,12 @@
+{
+  "name": "FavieXTracker",
+  "displayName": "Favie X Tracker",
+  "version": "1.0.0",
+  "description": "Real-time screen tracking with AI-powered analysis",
+  "author": "favie1963-lgtm",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/favie1963-lgtm/Favie-X-Tracker-.git"
+  }
+}
