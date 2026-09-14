@@ -1,0 +1,63 @@
+.tracking-display {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.display-header {
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.timestamp {
+  color: #6c757d;
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+.frame-container {
+  background: #000;
+  border: 2px solid #333;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 20px;
+}
+
+.frame-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0.8; }
+  to { opacity: 1; }
+}
+
+.error-message, .loading-message {
+  text-align: center;
+  color: #fff;
+  padding: 40px;
+}
+
+.error-message {
+  background: #dc3545;
+}
+
+.loading-message {
+  background: #6c757d;
+}
+
+.info-panel {
+  background: #e7f3ff;
+  padding: 15px;
+  border-radius: 6px;
+  border-left: 4px solid #007bff;
+  font-size: 14px;
+  color: #004085;
+}
