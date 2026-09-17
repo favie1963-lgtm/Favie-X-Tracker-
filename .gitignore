@@ -18,3 +18,12 @@ data/
 .electron-builder.config.js
 output/
 release/
+
+# Generated vision-parity fixture (scripts/reference_tracker.py output)
+.parity/
+
+# Android build artifacts
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties

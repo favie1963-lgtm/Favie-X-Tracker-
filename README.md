@@ -21,28 +21,56 @@ A powerful screen tracking application that combines AI and computer vision to m
 
 ### Prerequisites
 
-- **Python 3.8+** (for backend)
-- **Node.js 14+** (for app framework - optional)
-- **macOS / Windows / Linux**
+- **Node.js 20+**
+- **JDK 21** and the **Android SDK** (only needed to build the APK)
+- **Python 3.8+** with OpenCV (only needed to run the vision parity tests)
 
-### Installation
+### Build the Android APK
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/favie1963-lgtm/Favie-X-Tracker-.git
-   cd Favie-X-Tracker-
-   ```
+```bash
+git clone https://github.com/favie1963-lgtm/Favie-X-Tracker-.git
+cd Favie-X-Tracker-
+npm install
+npm run apk
+```
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   npm install  # if using Node.js
-   ```
+The debug APK is written to:
 
-3. **Run the application**
-   ```bash
-   python app.py
-   ```
+```
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Install it on a connected device with:
+
+```bash
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+The first time tracking is started the app asks for screen-capture consent.
+Capture then runs in a foreground service so it keeps working while the app is
+in the background.
+
+### Web / desktop development
+
+```bash
+npm install
+npm run dev      # dev server on http://localhost:3000
+npm run build    # production bundle in dist/
+npm run preview  # serve the built bundle
+```
+
+In a browser the capture source falls back to `getDisplayMedia`, so a screen,
+window or tab can be shared without an Android device.
+
+### Vision parity tests
+
+The JavaScript port is checked against an OpenCV reference implementation:
+
+```bash
+pip install opencv-python numpy
+python3 scripts/reference_tracker.py .parity
+npm run test:vision
+```
 
 ---
 

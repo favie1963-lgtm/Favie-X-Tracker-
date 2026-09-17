@@ -1,0 +1,41 @@
+{
+  "name": "favie-x-tracker",
+  "version": "1.0.0",
+  "description": "Screen tracking with on-device computer-vision analysis, object detection and cup tracking.",
+  "author": "favie1963-lgtm <favie1963@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/favie1963-lgtm/Favie-X-Tracker-",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/favie1963-lgtm/Favie-X-Tracker-"
+  },
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "cap:sync": "cap sync android",
+    "cap:add:android": "cap add android",
+    "build:android": "npm run build && cap sync android",
+    "apk": "npm run build:android && cd android && ./gradlew assembleDebug",
+    "apk:release": "npm run build:android && cd android && ./gradlew assembleRelease",
+    "test:vision": "node scripts/vision-parity.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/preferences": "^7.0.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.6.9",
+    "@vitejs/plugin-react": "^5.2.0",
+    "vite": "^7.3.6"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

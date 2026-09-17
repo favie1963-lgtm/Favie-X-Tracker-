@@ -1,0 +1,11 @@
+{
+  "appId": "com.favie.xtracker",
+  "appName": "Favie X Tracker",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
