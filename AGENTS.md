@@ -61,6 +61,48 @@ clean of lint errors; remaining warnings are icon/dependency noise.
   installing TypeScript just to run the CLI.
 - Capacitor plugin registration is explicit in `MainActivity.java`. Adding a
   plugin class without registering it fails silently at runtime.
+- `android/local.properties` is gitignored, so a fresh checkout has no SDK
+  path. Write `sdk.dir=...` into it before running gradle.
+
+## Branding
+
+`scripts/generate_brand_assets.py` is the single source of truth for the
+launcher icon and splash PNGs; `scripts/gen_splash_vector.py` emits
+`splash_icon.xml` for the Android 12+ splash slot. Both write into
+`android/app/src/main/res/`, so regenerate and commit rather than editing the
+PNGs by hand. `src/components/BrandMark.jsx` mirrors the same geometry for the
+in-app header, so a change to the mark means changing it in both places.
+
+Three things that are easy to get wrong here:
+
+- `ic_launcher_background` must stay black. It was white, and because the
+  adaptive foreground is white ink the icon rendered invisible.
+- The adaptive foreground is scaled to fit the 72dp safe zone's inscribed
+  circle. Scaling it up to match the legacy icons makes round launcher masks
+  clip the mark's corners.
+- The rasteriser that generates the PNGs ignores SVG `mask` elements. The
+  reticle hole in the X is an evenodd `clipPath`, which is also why the in-app
+  `BrandMark` uses a clip path and not a coloured disc.
+
+## Setting up a build environment
+
+The container ships no JDK and no Android SDK, and installing them system-wide
+needs root. A working toolchain can be placed under `/tmp` instead:
+
+```bash
+curl -L -o /tmp/jdk21.tar.gz \
+  "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
+mkdir -p /tmp/jdk && tar xzf /tmp/jdk21.tar.gz -C /tmp/jdk --strip-components=1
+```
+
+Then the Android command-line tools, `chmod +x` their `bin/*` (the zip drops
+the executable bit), and `sdkmanager` for `platforms;android-35` and
+`build-tools;35.0.0`. Finally set `JAVA_HOME=/tmp/jdk`, `ANDROID_HOME` and
+`sdk.dir`, then run `npm run apk`.
+
+`npm run apk` runs the web build and `cap sync` before gradle. Running gradle
+alone packages whatever is already in `android/app/src/main/assets/public`,
+which is how a build can silently ship a stale web bundle.
 
 ## Historical context
 
