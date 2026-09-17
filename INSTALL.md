@@ -1,5 +1,9 @@
 # Favie X Tracker - Installation & Setup Guide
 
+> **Note:** This guide describes an earlier Electron + Flask desktop design. That
+> backend is not present in this repository. For current instructions see the
+> [README](./README.md) — `npm install && npm run apk` builds the Android APK.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

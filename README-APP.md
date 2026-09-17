@@ -1,5 +1,9 @@
 # Favie X Tracker
 
+> **Note:** This document describes an earlier Electron + Flask desktop design
+> that is not present in this repository. The app now captures and analyses
+> on-device; see the [README](./README.md) for current instructions.
+
 🎯 A powerful desktop application for real-time screen tracking with AI-powered analysis and specialized object detection.
 
 ## ✨ Features

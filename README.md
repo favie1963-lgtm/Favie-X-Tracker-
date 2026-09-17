@@ -78,20 +78,32 @@ npm run test:vision
 
 ```
 Favie-X-Tracker-/
+├── android/                      # Capacitor Android project
+│   └── app/src/main/
+│       ├── AndroidManifest.xml
+│       └── java/com/favie/xtracker/
+│           ├── MainActivity.java
+│           ├── ScreenCapturePlugin.java   # MediaProjection capture
+│           └── ScreenCaptureService.java  # Foreground service
 ├── app/
-│   ├── main.py              # Main application entry point
-│   ├── screen_capture.py    # Screen capture module
-│   └── analytics.py         # Analytics engine
+│   └── tracking.py               # OpenCV reference tracker (parity oracle)
+├── scripts/
+│   ├── reference_tracker.py      # Generates the parity fixture
+│   └── vision-parity.mjs         # Compares JS detections to the reference
 ├── src/
-│   ├── logic.js             # Core game/tracking logic
-│   ├── tracking.js          # Object tracking system
-│   ├── simulator.js         # Simulation engine
-│   └── thimbles-cup-highlighter.user.js  # Browser integration
-├── data/                    # Local data storage
-├── tests/                   # Unit tests
-├── requirements.txt         # Python dependencies
-├── package.json            # Node.js dependencies
-└── README.md
+│   ├── App.jsx                   # Tab shell
+│   ├── components/               # Tracking / Dashboard / Analytics tabs
+│   ├── services/
+│   │   ├── analytics.js
+│   │   ├── storage.js
+│   │   ├── tracking.js           # Cup tracking
+│   │   ├── capture/              # Frame sources (Android + getDisplayMedia)
+│   │   └── vision/               # Detection, config, OpenCV helpers
+│   └── main.jsx
+├── thimbles-cup-highlighter.user.js  # Optional Tampermonkey integration
+├── capacitor.config.json
+├── requirements.txt
+└── package.json
 ```
 
 ---
@@ -100,13 +112,9 @@ Favie-X-Tracker-/
 
 ### Basic Screen Tracking
 
-```python
-from app.screen_capture import ScreenTracker
-
-tracker = ScreenTracker()
-tracker.start()
-# App will run in background, capturing and analyzing screen activity
-```
+Start tracking from the Tracking tab. On Android the app asks for screen-capture
+consent and then streams frames through a foreground service. In a browser the
+same pipeline runs against a screen, window or tab shared via `getDisplayMedia`.
 
 ### Cup/Object Tracking (Thimbles)
 
@@ -117,9 +125,12 @@ The app includes specialized tracking for cup-based games:
 
 ### Tampermonkey Integration
 
-For browser-based tracking:
+`thimbles-cup-highlighter.user.js` is an optional, standalone browser
+userscript. It observes game traffic directly in the page and is independent of
+the app; it does not require the Android build or the dev server.
+
 1. Install [Tampermonkey](https://www.tampermonkey.net/)
-2. Import `src/thimbles-cup-highlighter.user.js`
+2. Import `thimbles-cup-highlighter.user.js`
 3. Enable on target gaming sites
 
 ---
@@ -145,34 +156,35 @@ For browser-based tracking:
 
 ## ⚙️ Configuration
 
-Create a `config.json` file to customize:
-
-```json
-{
-  "capture_interval": 1000,
-  "resolution": "1920x1080",
-  "output_format": "json",
-  "enable_ai_analysis": true,
-  "storage_path": "./data"
-}
-```
+Vision tuning lives in `src/services/vision/config.js` (colour ranges, minimum
+detection area, frame history, cup-tracking frame rate). `.env.example`
+documents the desktop/development values. The Android APK performs capture and
+analysis on-device and reads no environment file.
 
 ---
 
 ## 🧪 Testing
 
+The JavaScript vision port is checked against an OpenCV reference:
+
 ```bash
-pytest tests/
+pip install opencv-python numpy
+python3 scripts/reference_tracker.py .parity
+npm run test:vision
 ```
+
+This writes a synthetic fixture to `.parity/` and asserts that every detection
+matches `app/tracking.py` within tolerance. The `Build and Test` workflow runs
+it on every push and pull request.
 
 ---
 
 ## 📖 Documentation
 
-- [Installation Guide](./docs/INSTALL.md)
-- [API Reference](./docs/API.md)
-- [Configuration Guide](./docs/CONFIG.md)
-- [Troubleshooting](./docs/TROUBLESHOOTING.md)
+- [Installation Guide](./INSTALL.md)
+- [API Reference](./API.md)
+- [Configuration Guide](./CONFIG.md)
+- [Android Build Notes](./PUBLISH.md)
 
 ---
 
@@ -198,7 +210,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 For issues, questions, or suggestions:
 - Open an [Issue](https://github.com/favie1963-lgtm/Favie-X-Tracker-/issues)
-- Check [Documentation](./docs/)
+- See the [Installation Guide](./INSTALL.md)
 - Contact: favie1963@gmail.com
 
 ---
