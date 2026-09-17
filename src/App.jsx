@@ -3,6 +3,8 @@ import './App.css';
 import Dashboard from './components/Dashboard';
 import TrackingDisplay from './components/TrackingDisplay';
 import Analytics from './components/Analytics';
+import BrandMark from './components/BrandMark';
+import LaunchOverlay from './components/LaunchOverlay';
 import { trackingService } from './services/tracking';
 
 function App() {
@@ -25,8 +27,15 @@ function App() {
 
   return (
     <div className="App">
+      <LaunchOverlay />
+
       <header className="app-header">
-        <h1>🎯 Favie X Tracker</h1>
+        <div className="brand">
+          <BrandMark size={34} className="brand-mark" />
+          <h1>
+            Favie <span className="brand-x">X</span> Tracker
+          </h1>
+        </div>
         <div className="status-indicator">
           <span className={`status ${isConnected ? 'connected' : 'disconnected'}`}></span>
           {isConnected ? `Tracking · ${status.fps?.toFixed(1) ?? '0.0'} FPS` : 'Idle'}
@@ -38,19 +47,19 @@ function App() {
           className={`nav-btn ${currentTab === 'tracking' ? 'active' : ''}`}
           onClick={() => setCurrentTab('tracking')}
         >
-          📹 Tracking
+          Tracking
         </button>
         <button
           className={`nav-btn ${currentTab === 'dashboard' ? 'active' : ''}`}
           onClick={() => setCurrentTab('dashboard')}
         >
-          🎮 Dashboard
+          Dashboard
         </button>
         <button
           className={`nav-btn ${currentTab === 'analytics' ? 'active' : ''}`}
           onClick={() => setCurrentTab('analytics')}
         >
-          📊 Analytics
+          Analytics
         </button>
       </nav>
 

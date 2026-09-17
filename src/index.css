@@ -4,6 +4,12 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
@@ -11,6 +17,10 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: #f5f5f5;
+  color: #111;
+  /* Android WebView flashes white on overscroll without this. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 code {

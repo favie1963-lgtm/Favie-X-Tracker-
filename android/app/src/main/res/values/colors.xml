@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand is black and white, so the accent ramp is greyscale. -->
+    <color name="colorPrimary">#000000</color>
+    <color name="colorPrimaryDark">#000000</color>
+    <color name="colorAccent">#FFFFFF</color>
+
+    <!-- Splash ground; also used as the window background to avoid a white
+         flash between the splash and the WebView's first paint. -->
+    <color name="splashBackground">#000000</color>
+</resources>
