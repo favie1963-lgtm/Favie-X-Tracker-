@@ -1,8 +1,10 @@
 package com.favie.xtracker;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
@@ -14,19 +16,23 @@ import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
 
 import androidx.activity.result.ActivityResult;
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -38,6 +44,15 @@ import java.nio.ByteBuffer;
  * and the projection is only created in the callback. A frame is grabbed by
  * asking the ImageReader for its most recent image, which is why the callback
  * keeps the reader open rather than tearing it down per frame.
+ *
+ * Two ordering constraints are handled explicitly:
+ *
+ *  - Android 14+ refuses to create a projection unless a foreground service of
+ *    type mediaProjection is already running, so the service is started first
+ *    and the plugin waits for its ready broadcast rather than assuming the
+ *    start call has taken effect.
+ *  - The notification permission only affects whether the service notification
+ *    is visible, so a denial is not treated as a capture failure.
  */
 @CapacitorPlugin(
         name = "ScreenCapture",
@@ -45,6 +60,9 @@ import java.nio.ByteBuffer;
                 @Permission(alias = "notifications", strings = { android.Manifest.permission.POST_NOTIFICATIONS })
         })
 public class ScreenCapturePlugin extends Plugin {
+
+    /** How long to wait for the capture service before giving up. */
+    private static final long SERVICE_READY_TIMEOUT_MS = 3000;
 
     private MediaProjection projection;
     private MediaProjectionManager projectionManager;
@@ -76,6 +94,33 @@ public class ScreenCapturePlugin extends Plugin {
             return;
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission()) {
+            requestPermissionForAlias("notifications", call, "notificationsResult");
+            return;
+        }
+        requestProjectionConsent(call);
+    }
+
+    /**
+     * Whether the capture notification will be visible.
+     *
+     * The permission is declared through the plugin annotation, so Capacitor
+     * resolves the alias and its API-level differences; the raw
+     * {@code POST_NOTIFICATIONS} constant is only defined from API 33, and
+     * referencing it directly trips InlinedApi below that.
+     */
+    private boolean hasNotificationPermission() {
+        return PermissionState.GRANTED.equals(getPermissionState("notifications"));
+    }
+
+    /** Capture still works without the notification, so a denial is not fatal. */
+    @PermissionCallback
+    private void notificationsResult(PluginCall call) {
+        if (call == null) return;
+        requestProjectionConsent(call);
+    }
+
+    private void requestProjectionConsent(PluginCall call) {
         Intent intent = projectionManager.createScreenCaptureIntent();
         startActivityForResult(call, intent, "handleProjectionResult");
     }
@@ -90,14 +135,13 @@ public class ScreenCapturePlugin extends Plugin {
         }
 
         try {
-            startCapture(result.getResultCode(), result.getData());
-            call.resolve(runningResult());
+            startCapture(result.getResultCode(), result.getData(), call);
         } catch (Exception e) {
             call.reject("Unable to start screen capture: " + e.getMessage(), e);
         }
     }
 
-    private void startCapture(int resultCode, Intent data) {
+    private void startCapture(int resultCode, Intent data, PluginCall call) {
         DisplayMetrics metrics = new DisplayMetrics();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getActivity().getDisplay().getRealMetrics(metrics);
@@ -115,15 +159,81 @@ public class ScreenCapturePlugin extends Plugin {
         handlerThread.start();
         handler = new Handler(handlerThread.getLooper());
 
-        // Android 14+ requires the foreground service to be running before the
-        // projection is created, otherwise getMediaProjection throws.
+        if (ScreenCaptureService.isRunning()) {
+            createProjection(resultCode, data, call);
+            return;
+        }
+
         startCaptureService();
+        awaitCaptureServiceReady(() -> createProjection(resultCode, data, call), call);
+    }
 
-        projection = projectionManager.getMediaProjection(resultCode, data);
-        projection.registerCallback(projectionCallback, handler);
+    private void createProjection(int resultCode, Intent data, PluginCall call) {
+        try {
+            projection = projectionManager.getMediaProjection(resultCode, data);
+            if (projection == null) {
+                call.reject("Unable to obtain a MediaProjection instance");
+                releaseCapture();
+                return;
+            }
+            projection.registerCallback(projectionCallback, handler);
+            recreateVirtualDisplay();
+            running = true;
+            call.resolve(runningResult());
+        } catch (Exception e) {
+            releaseCapture();
+            call.reject("Unable to start screen capture: " + e.getMessage(), e);
+        }
+    }
 
-        recreateVirtualDisplay();
-        running = true;
+    /**
+     * Wait for {@link ScreenCaptureService} to reach the foreground.
+     *
+     * The service broadcasts {@code ACTION_READY} after {@code startForeground}
+     * returns; this registers for it on the main looper and falls back to the
+     * timeout so a service that fails to start surfaces an error instead of
+     * hanging the call forever.
+     */
+    private void awaitCaptureServiceReady(Runnable onReady, PluginCall call) {
+        Handler main = new Handler(Looper.getMainLooper());
+        BroadcastReceiver[] holder = new BroadcastReceiver[1];
+        boolean[] settled = { false };
+
+        Runnable cleanup = () -> {
+            if (holder[0] == null) return;
+            try {
+                getContext().unregisterReceiver(holder[0]);
+            } catch (IllegalArgumentException ignored) {
+                // Already unregistered by the other branch.
+            }
+            holder[0] = null;
+        };
+
+        holder[0] = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (settled[0]) return;
+                settled[0] = true;
+                cleanup.run();
+                onReady.run();
+            }
+        };
+
+        // ContextCompat's overload handles the API split internally: pre-33
+        // releases have no receiver-export flag, and the flag constant itself is
+        // only defined from 33.
+        ContextCompat.registerReceiver(
+                getContext(),
+                holder[0],
+                new IntentFilter(ScreenCaptureService.ACTION_READY),
+                ContextCompat.RECEIVER_NOT_EXPORTED);
+
+        main.postDelayed(() -> {
+            if (settled[0]) return;
+            settled[0] = true;
+            cleanup.run();
+            call.reject("The screen capture service did not start");
+        }, SERVICE_READY_TIMEOUT_MS);
     }
 
     private void startCaptureService() {
@@ -138,7 +248,14 @@ public class ScreenCapturePlugin extends Plugin {
     private void stopCaptureService() {
         Intent intent = new Intent(getContext(), ScreenCaptureService.class);
         intent.putExtra(ScreenCaptureService.EXTRA_STOP, true);
-        getContext().startService(intent);
+        try {
+            getContext().startService(intent);
+        } catch (IllegalStateException e) {
+            // The app is backgrounded and the OS will not accept a plain service
+            // start. The projection is already stopped at this point, so the
+            // notification is all that is left; stopping it is best-effort.
+            getContext().stopService(intent);
+        }
     }
 
     /**

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './Dashboard.css';
+import Icon from './Icon';
 import { trackingService } from '../services/tracking';
 
 /**
@@ -47,72 +48,111 @@ function Dashboard({ status }) {
     setObjects(result.objects ?? []);
   };
 
+  const stats = [
+    ['FPS', (status?.fps ?? 0).toFixed(1)],
+    ['Frames captured', status?.frame_count ?? 0],
+    ['Tracked objects', status?.tracking_data_count ?? 0],
+    ['Capture source', status?.capture_source ?? 'none'],
+  ];
+
   return (
     <div className="dashboard">
-      <div className="dashboard-header">
-        <h2>🎮 Control Dashboard</h2>
-      </div>
+      <header className="section-header">
+        <h2>
+          <Icon name="gauge" />
+          Control dashboard
+        </h2>
+        <span className={`state-pill ${isTracking ? 'on' : 'off'}`}>
+          {isTracking ? 'Tracking' : 'Idle'}
+        </span>
+      </header>
 
       <div className="controls-panel">
-        <div className="control-section">
-          <h3>Tracking Controls</h3>
-          <button
-            className={`control-btn ${isTracking ? 'active' : ''}`}
-            onClick={handleStartTracking}
-            disabled={isTracking || loading}
-          >
-            ▶️ Start Tracking
-          </button>
-          <button
-            className={`control-btn stop ${!isTracking ? 'disabled' : ''}`}
-            onClick={handleStopTracking}
-            disabled={!isTracking || loading}
-          >
-            ⏹️ Stop Tracking
-          </button>
-        </div>
+        <section className="panel">
+          <h3>Tracking controls</h3>
+          <div className="control-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleStartTracking}
+              disabled={isTracking || loading}
+            >
+              <Icon name="play" size={16} />
+              Start tracking
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handleStopTracking}
+              disabled={!isTracking || loading}
+            >
+              <Icon name="stop" size={16} />
+              Stop tracking
+            </button>
+          </div>
+        </section>
 
-        <div className="status-panel">
-          <h3>Status Information</h3>
-          {status && (
-            <div className="status-info">
-              <p><strong>Running:</strong> {isTracking ? '✅ Yes' : '❌ No'}</p>
-              <p><strong>FPS:</strong> {(status.fps ?? 0).toFixed(1)}</p>
-              <p><strong>Frames Captured:</strong> {status.frame_count ?? 0}</p>
-              <p><strong>Tracked Objects:</strong> {status.tracking_data_count ?? 0}</p>
-              <p><strong>Capture Source:</strong> {status.capture_source ?? 'none'}</p>
-            </div>
-          )}
-          {message && <p className="status-message">{message}</p>}
-        </div>
-      </div>
-
-      <div className="objects-section">
-        <div className="objects-header">
-          <h3>Detected Objects</h3>
-          <button className="refresh-btn" onClick={handleGetObjects}>
-            🔄 Refresh
-          </button>
-        </div>
-
-        <div className="objects-list">
-          {objects.length > 0 ? (
-            objects.map((obj) => (
-              <div key={obj.id} className="object-card">
-                <div className="object-info">
-                  <p><strong>ID:</strong> {obj.id}</p>
-                  <p><strong>Color:</strong> {obj.color}</p>
-                  <p><strong>Confidence:</strong> {obj.confidence?.toFixed(1)}%</p>
-                  <p><strong>Position:</strong> ({obj.centroid?.x}, {obj.centroid?.y})</p>
-                  <p><strong>Area:</strong> {obj.area?.toFixed(0)} px²</p>
-                </div>
+        <section className="panel">
+          <h3>Status</h3>
+          <dl className="stat-grid">
+            {stats.map(([label, value]) => (
+              <div className="stat" key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
               </div>
-            ))
-          ) : (
-            <p className="empty-message">No objects detected yet</p>
+            ))}
+          </dl>
+          {message && (
+            <p className="status-message">
+              <Icon name="alert" size={15} />
+              {message}
+            </p>
           )}
-        </div>
+        </section>
       </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>Detected objects</h3>
+          <button type="button" className="btn btn-ghost" onClick={handleGetObjects}>
+            <Icon name="refresh" size={15} />
+            Refresh
+          </button>
+        </div>
+
+        {objects.length > 0 ? (
+          <div className="objects-list">
+            {objects.map((obj) => (
+              <article className="object-card" key={obj.id}>
+                <header>
+                  <span className="object-id">{obj.id}</span>
+                  <span className="object-color">{obj.color}</span>
+                </header>
+                <dl>
+                  <div>
+                    <dt>Confidence</dt>
+                    <dd>{obj.confidence?.toFixed(1)}%</dd>
+                  </div>
+                  <div>
+                    <dt>Position</dt>
+                    <dd>
+                      {obj.centroid?.x}, {obj.centroid?.y}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Area</dt>
+                    <dd>{obj.area?.toFixed(0)} px²</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-message">
+            No objects detected yet. Start tracking, then refresh to list what the tracker sees.
+          </p>
+        )}
+      </section>
     </div>
   );
 }

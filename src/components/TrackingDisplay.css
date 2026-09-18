@@ -1,63 +1,94 @@
 .tracking-display {
   padding: 20px;
+  padding-left: calc(20px + env(safe-area-inset-left));
+  padding-right: calc(20px + env(safe-area-inset-right));
   max-width: 1200px;
   margin: 0 auto;
 }
 
-.display-header {
-  margin-bottom: 20px;
-  text-align: center;
-}
-
-.timestamp {
-  color: #6c757d;
-  font-size: 12px;
-  margin-top: 5px;
-}
-
 .frame-container {
   background: #000;
-  border: 2px solid #333;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   aspect-ratio: 16 / 9;
-  margin-bottom: 20px;
+  margin-bottom: var(--gap);
+}
+
+/* A captured frame is not always 16:9, so the letterbox shrinks to the frame's
+   own ratio once one has arrived. The container keeps 16:9 until then so the
+   placeholder does not jump when the first frame lands. */
+.frame-container.has-frame {
+  aspect-ratio: auto;
+}
+
+.frame-wrapper {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
 }
 
 .frame-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(60vh, 520px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+/* Pinned to the image's box, not the container: the boxes are expressed in the
+   captured frame's pixel coordinates, so the SVG has to share the image's
+   rendered rectangle for them to line up. */
+.frame-overlay {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  animation: fadeIn 0.3s ease-in;
+  pointer-events: none;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0.8; }
-  to { opacity: 1; }
-}
-
-.error-message, .loading-message {
+.frame-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   text-align: center;
-  color: #fff;
-  padding: 40px;
+  padding: 40px 24px;
+  color: var(--text-muted);
 }
 
-.error-message {
-  background: #dc3545;
+.frame-state .state-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
 }
 
-.loading-message {
-  background: #6c757d;
+.frame-state .state-hint {
+  font-size: 13px;
+  max-width: 42ch;
+}
+
+.frame-state.error-message {
+  color: var(--danger);
+}
+
+.frame-state.error-message .state-title {
+  color: var(--danger);
 }
 
 .info-panel {
-  background: #e7f3ff;
-  padding: 15px;
-  border-radius: 6px;
-  border-left: 4px solid #007bff;
-  font-size: 14px;
-  color: #004085;
+  background: var(--surface);
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  font-size: 13px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 6px;
 }

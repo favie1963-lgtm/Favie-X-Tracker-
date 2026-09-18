@@ -32,5 +32,11 @@ jobs:
         python3 scripts/reference_tracker.py .parity
         npm run test:vision
 
+    - name: Config plumbing tests
+      run: npm run test:config
+
+    - name: Tracking pipeline tests
+      run: npm run test:pipeline
+
     - name: Build
       run: npm run build

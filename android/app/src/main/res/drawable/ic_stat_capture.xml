@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Status-bar icon for the capture foreground service.
+
+  A notification small icon is drawn as an alpha mask and tinted by the system,
+  so it must be a solid silhouette: the framework icon that was used before
+  (android.R.drawable.ic_menu_view) is a multi-colour asset and renders as an
+  opaque square on many devices. This is the app's reticle mark, which reads at
+  16dp because it is a single shape with a clear hole in the middle.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11,2h2v5h-2zM11,17h2v5h-2zM2,11h5v2H2zM17,11h5v2h-5z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,4.6A7.4,7.4 0 1,0 12,19.4A7.4,7.4 0 1,0 12,4.6ZM12,9.4A2.6,2.6 0 1,1 12,14.6A2.6,2.6 0 1,1 12,9.4Z" />
+</vector>

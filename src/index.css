@@ -1,3 +1,26 @@
+/* Design tokens. The brand is black and white, so every surface is a step on a
+   single greyscale ramp rather than a tinted accent. Panels sit on a darker
+   ground than the chrome so the content reads as the lit surface. */
+:root {
+  --bg: #0a0a0a;
+  --surface: #161616;
+  --surface-raised: #1d1d1d;
+  --border: #2c2c2c;
+  --border-strong: #3d3d3d;
+  --text: #f5f5f5;
+  --text-muted: #a3a3a3;
+  --text-faint: #6f6f6f;
+  --ink: #ffffff;
+  --ink-inverse: #0a0a0a;
+  --danger: #ff6b6b;
+  --danger-surface: #2a1414;
+  --danger-border: #5c2a2a;
+  --focus: rgba(255, 255, 255, 0.45);
+  --radius: 10px;
+  --radius-sm: 7px;
+  --gap: 16px;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -16,14 +39,134 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #f5f5f5;
-  color: #111;
+  background: var(--bg);
+  color: var(--text);
   /* Android WebView flashes white on overscroll without this. */
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Form controls inherit the platform font otherwise, which makes buttons and
+   inputs render at a different size to the text around them. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* A visible focus ring is required for keyboard navigation, and it is easy to
+   lose against the dark ground, so it is defined once here rather than repeated
+   per component. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* ---------- Shared UI primitives ----------
+   Buttons, panels, and the monospace object id are used by more than one tab.
+   They live in the global sheet so a tab does not depend on another tab's CSS
+   having been bundled. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  min-height: 46px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--ink);
+  color: var(--ink-inverse);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #e2e2e2;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border);
+  padding: 8px 12px;
+  min-height: 36px;
+  font-size: 13px;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 18px;
+  border-radius: var(--radius);
+}
+
+.panel h3 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.panel-header h3 {
+  margin-bottom: 0;
+}
+
+.object-id {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-message {
+  text-align: center;
+  color: var(--text-faint);
+  padding: 32px 16px;
+  font-size: 13px;
+  line-height: 1.5;
 }

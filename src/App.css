@@ -1,14 +1,20 @@
 /* Application chrome. Monochrome by design: the brand is black and white, so
-   the shell uses a near-black header, a white work surface and a single
-   greyscale ramp rather than a colour accent. */
+   the shell uses a near-black header and a single greyscale ramp rather than a
+   colour accent.
+
+   Sizing rules that matter on a phone:
+   - The header, nav and footer are fixed height; only <main> scrolls, so the
+     tab bar can never be scrolled off screen.
+   - Every horizontal padding includes the safe-area inset, otherwise the
+     content sits under the notch or the gesture bar. */
 
 .App {
   display: flex;
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
-  background: #f5f5f5;
-  color: #111;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .app-header {
@@ -21,6 +27,8 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
 }
 
 .brand {
@@ -88,35 +96,42 @@
 }
 
 .app-nav {
-  background: #fff;
-  border-bottom: 1px solid #e0e0e0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   display: flex;
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
+  flex: none;
 }
 
 .nav-btn {
   flex: 1;
-  padding: 14px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 13px 8px;
+  min-height: 48px;
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #767676;
+  color: var(--text-muted);
   border-bottom: 2px solid transparent;
-  transition: color 0.2s ease, border-color 0.2s ease;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
 .nav-btn:hover {
-  color: #111;
+  color: var(--text);
 }
 
 .nav-btn.active {
-  color: #000;
-  border-bottom-color: #000;
+  color: #fff;
+  border-bottom-color: #fff;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .app-main {
@@ -124,17 +139,91 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 0;
+  /* The nav already accounts for the side insets, so the scroll container only
+     needs to reserve the gesture bar at the bottom. */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .app-footer {
   background: #000;
-  color: #9a9a9a;
+  color: var(--text-faint);
   padding: 10px 20px calc(10px + env(safe-area-inset-bottom));
   text-align: center;
   font-size: 11px;
   letter-spacing: 0.03em;
+  flex: none;
+  border-top: 1px solid var(--border);
 }
 
 .app-footer p {
   margin: 0;
+}
+
+/* Shared section heading used by all three tabs, so their headers line up and
+   sit on the same baseline as the status pill / timestamp beside them. */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.section-header h2 .icon {
+  color: var(--text-muted);
+  flex: none;
+}
+
+.section-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.state-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.state-pill.on {
+  color: #fff;
+  border-color: #fff;
+}
+
+.state-pill.on::before {
+  background: #fff;
+  animation: pulse 2s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-pill.on::before { animation: none; }
 }

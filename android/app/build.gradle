@@ -1,5 +1,16 @@
 apply plugin: 'com.android.application'
 
+// Release signing credentials live in android/keystore.properties, which is
+// gitignored so the keystore and its passwords never enter version control.
+// Without that file the release build still runs but produces an unsigned APK,
+// which is what a fresh checkout gets before the maintainer creates a key.
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def keystoreProperties = new Properties()
+def hasReleaseSigning = keystorePropertiesFile.exists()
+if (hasReleaseSigning) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "com.favie.xtracker"
     compileSdk rootProject.ext.compileSdkVersion
@@ -16,10 +27,27 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+
+            // Only attach a signing config when a keystore is present, so
+            // `assembleRelease` still works in CI and on fresh checkouts.
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

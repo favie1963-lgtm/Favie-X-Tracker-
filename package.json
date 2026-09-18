@@ -20,7 +20,11 @@
     "build:android": "npm run build && cap sync android",
     "apk": "npm run build:android && cd android && ./gradlew assembleDebug",
     "apk:release": "npm run build:android && cd android && ./gradlew assembleRelease",
-    "test:vision": "node scripts/vision-parity.mjs"
+    "apk:publish": "node scripts/build-release.mjs",
+    "test:vision": "node scripts/vision-parity.mjs",
+    "test:config": "node scripts/check-config-plumbing.mjs",
+    "test:pipeline": "node scripts/check-pipeline.mjs",
+    "test": "npm run test:config && npm run test:pipeline && npm run test:vision"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

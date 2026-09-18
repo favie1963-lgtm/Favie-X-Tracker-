@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Base application theme. -->
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
@@ -10,21 +10,36 @@
         <item name="android:windowBackground">@color/splashBackground</item>
     </style>
 
+    <!--
+      Applied to the activity once the splash hands over. The parent is a DayNight
+      theme, so without an explicit windowBackground a light-mode device would
+      reset the window to white between the splash and the WebView's first paint.
+      The status and navigation bars are forced black for the same reason: the
+      in-app header is black, and a light-mode status bar would band against it.
+    -->
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <item name="android:windowBackground">@color/splashBackground</item>
+        <item name="android:statusBarColor">@color/splashBackground</item>
+        <item name="android:navigationBarColor">@color/splashBackground</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
     </style>
 
-    <!-- Launch theme. On Android 12+ the system draws windowSplashScreen* as
-         the splash; earlier releases fall back to android:background, which is
-         why both are set. postSplashScreenTheme hands the activity the normal
-         theme once the splash is dismissed. -->
+    <!--
+      Launch theme. The Android 12+ splash is described by the windowSplashScreen*
+      attributes; on older releases core-splashscreen only paints the background,
+      so the window background carries the mark too. See drawable/splash_screen.
+      The edge-to-edge opt-out lives in values-v35 because the attribute is only
+      understood on Android 15+; declaring it here trips NewApi below that.
+    -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/splashBackground</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:windowBackground">@drawable/splash_screen</item>
     </style>
 
 </resources>

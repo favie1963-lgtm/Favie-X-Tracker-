@@ -7,20 +7,27 @@ a reticle and echoes what the app does (screen capture, object detection).
 Everything is black and white.
 
 The mark is built once in its own 56x44 coordinate space and then placed with
-a transform, so one geometry serves three contexts that need different sizes:
+a transform, so one geometry serves four contexts that need different sizes:
 
   adaptive foreground  the mark must fit the 72dp safe zone, and must also
                        fit that zone's inscribed circle, or a round launcher
                        mask clips its corners
-  legacy icon          no mask is applied, so the mark can fill more of the tile
-  splash               the mark is sized relative to the shorter screen edge
+  monochrome           reuses the foreground art; the platform tints it
+  legacy icon          no mask is applied, so the mark gets its own inset plate
+  splash               a vector, emitted by scripts/gen_splash_vector.py
 
 Body text in the app uses src/components/BrandMark.jsx, which mirrors this
 geometry.
 
+The splash is a vector rather than a set of PNGs. Generating one bitmap per
+density produced five rasters that were byte-identical, drew a warning for
+inconsistent density-independent sizing, and added ~120KB to the APK for an
+image the user sees for a fraction of a second.
+
 Usage: python3 scripts/generate_brand_assets.py
 """
 
+import math
 import os
 
 import cairosvg
@@ -42,7 +49,6 @@ KNOB_R = 6.0
 # safe circle's radius of 36, so no round mask clips it.
 ADAPTIVE_SCALE = 1.0
 LEGACY_FRACTION = 0.78  # of the 108 tile
-SPLASH_FRACTION = 0.32  # of the shorter edge
 
 INK = "#FFFFFF"
 BG = "#000000"
@@ -104,30 +110,34 @@ def _place(scale, cx, cy, color=INK):
 
 
 def svg_icon(shape, size):
-    """Legacy launcher icon: the mark on a black ground."""
+    """Legacy launcher icon: the mark on a black plate inset in the tile.
+
+    The plate is inset rather than filling the tile. Legacy icons are shown
+    unmasked, and one that fills every pixel of its square region reads as a
+    blocky tile next to the adaptive icons on the same launcher, so the plate
+    carries its own rounded (or circular) silhouette with transparent margins.
+    """
+    inset = 6.0
+    span = CANVAS - inset * 2
     if shape == "circle":
-        ground = f'<circle cx="{CANVAS / 2}" cy="{CANVAS / 2}" r="{CANVAS / 2}" fill="{BG}"/>'
+        ground = f'<circle cx="{CANVAS / 2}" cy="{CANVAS / 2}" r="{span / 2}" fill="{BG}"/>'
+        # The X reaches the mark's bounding-box corners, so a circle needs a
+        # smaller mark than a square plate: half-diagonal hypot(28,22)=35.6 must
+        # stay inside the radius.
+        half_diagonal = math.hypot(MARK_W / 2, MARK_H / 2)
+        scale = (span / 2) * 0.94 / half_diagonal
     else:
-        ground = f'<rect x="0" y="0" width="{CANVAS}" height="{CANVAS}" fill="{BG}"/>'
-    scale = LEGACY_FRACTION * CANVAS / MARK_W
+        ground = (
+            f'<rect x="{inset}" y="{inset}" width="{span}" height="{span}" '
+            f'rx="{round(span * 0.22, 2)}" ry="{round(span * 0.22, 2)}" fill="{BG}"/>'
+        )
+        scale = LEGACY_FRACTION * span / MARK_W
     return _wrap(CANVAS, CANVAS, ground + _place(scale, CANVAS / 2, CANVAS / 2), _clip())
 
 
 def svg_foreground(size):
     """Adaptive foreground: the mark only, on a transparent ground."""
     return _wrap(CANVAS, CANVAS, _place(ADAPTIVE_SCALE, 54, 54), _clip())
-
-
-def svg_splash(w, h):
-    """Black splash with the mark centred relative to the shorter edge."""
-    scale = SPLASH_FRACTION * min(w, h) / MARK_W
-    return _wrap(
-        w,
-        h,
-        f'<rect x="0" y="0" width="{w}" height="{h}" fill="{BG}"/>'
-        + _place(scale, w / 2, h / 2),
-        _clip(),
-    )
 
 
 def write_png(path, svg, w, h):
@@ -146,20 +156,6 @@ MIPMAPS = [
     ("mipmap-xxxhdpi", 192, 432),
 ]
 
-SPLASHES = [
-    ("drawable", 480, 320),
-    ("drawable-land-mdpi", 480, 320),
-    ("drawable-land-hdpi", 800, 480),
-    ("drawable-land-xhdpi", 1280, 720),
-    ("drawable-land-xxhdpi", 1600, 960),
-    ("drawable-land-xxxhdpi", 1920, 1280),
-    ("drawable-port-mdpi", 320, 480),
-    ("drawable-port-hdpi", 480, 800),
-    ("drawable-port-xhdpi", 720, 1280),
-    ("drawable-port-xxhdpi", 960, 1600),
-    ("drawable-port-xxxhdpi", 1280, 1920),
-]
-
 
 def main():
     count = 0
@@ -171,9 +167,6 @@ def main():
         ):
             write_png(os.path.join(RES, d, name), svg, px, px)
             count += 1
-    for d, w, h in SPLASHES:
-        write_png(os.path.join(RES, d, "splash.png"), svg_splash(w, h), w, h)
-        count += 1
     print(f"wrote {count} assets under {os.path.relpath(RES, ROOT)}")
 
 

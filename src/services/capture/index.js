@@ -72,15 +72,22 @@ async function grabNativeFrame(options = {}) {
   if (!dataUrl) return null;
 
   const bitmap = await decodeDataUrl(dataUrl);
-  const canvas = createCanvas(bitmap.width, bitmap.height);
+  // Read the dimensions before closing. `close()` detaches the bitmap and
+  // resets width/height to 0, and downstream detection rejects a frame whose
+  // dimensions are 0 — so reading them afterwards silently produced a frame
+  // that never contained any detections.
+  const width = bitmap.width;
+  const height = bitmap.height;
+
+  const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(bitmap, 0, 0);
-  const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  const imageData = ctx.getImageData(0, 0, width, height);
   if (typeof bitmap.close === 'function') bitmap.close();
 
   return {
-    width: bitmap.width,
-    height: bitmap.height,
+    width,
+    height,
     data: imageData.data,
     dataUrl,
     timestamp: Date.now(),

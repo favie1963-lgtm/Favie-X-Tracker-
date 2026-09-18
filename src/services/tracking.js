@@ -19,6 +19,12 @@ const DEFAULT_CONFIG = {
   max_cups: 3,
   cup_tracking_max_fps: CUP_TRACKING_MAX_FPS,
   analysis_scale: 1,
+  // Frame transport settings. `maxWidth` is read by both the native plugin and
+  // the browser capture source, so both keys have to exist here: passing
+  // undefined would silently fall back to each layer's own default and the
+  // config would stop being the single source of truth.
+  max_frame_width: 960,
+  jpeg_quality: 70,
   debug_mode: false,
 };
 
@@ -38,7 +44,6 @@ export class TrackingService {
     this.lastDetections = [];
     this.lastCupResult = null;
     this.lastError = null;
-    this.frameTimestamps = [];
     this.cupLastRun = 0;
     this.listeners = new Set();
     this.sessions = [];
@@ -62,13 +67,24 @@ export class TrackingService {
     this.listeners.forEach((fn) => fn(status));
   }
 
+  /**
+   * Frame-transport options handed to whichever capture source is chosen.
+   *
+   * Both settings are read from config rather than hard-coded here, so a
+   * caller changing `max_frame_width` or `jpeg_quality` actually takes effect
+   * instead of being overridden by a per-layer fallback.
+   */
+  captureOptions() {
+    return {
+      maxWidth: this.config.max_frame_width,
+      quality: this.config.jpeg_quality,
+    };
+  }
+
   async start() {
     if (this.running) return { status: 'already-running' };
 
-    this.source = await createCaptureSource({
-      maxWidth: this.config.max_frame_width,
-      quality: this.config.jpeg_quality,
-    });
+    this.source = await createCaptureSource(this.captureOptions());
 
     if (this.source.kind === 'none') {
       this.lastError =
@@ -79,7 +95,6 @@ export class TrackingService {
 
     this.running = true;
     this.frameCount = 0;
-    this.frameTimestamps = [];
     this.lastError = null;
     this.tracker.reset();
     this.analytics.start();
@@ -124,8 +139,6 @@ export class TrackingService {
 
     this.lastFrame = frame;
     this.frameCount += 1;
-    this.frameTimestamps.push(Date.now());
-    if (this.frameTimestamps.length > 60) this.frameTimestamps.shift();
 
     // Preview state is kept separate from the raw frame: the raw pixel buffer is
     // large and would be copied into every status notification.

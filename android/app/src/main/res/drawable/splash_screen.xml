@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pre-Android-12 launch background. The system splash (Android 12+) is drawn from
+  the windowSplashScreen* attributes, but those attributes do nothing on older
+  releases, where the launch theme's window background is all the user sees.
+  core-splashscreen's compat drawable is a plain windowSplashScreenBackground
+  fill, so this layer-list supplies the mark as well and the launch screen looks
+  the same on every release.
+
+  The mark is a vector, which is why there is no longer one PNG per density: five
+  rasters that differed only in size tripped the density-size and duplicate-icon
+  lint checks and added ~120KB to the APK.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splashBackground" />
+    <item
+        android:drawable="@drawable/splash_icon"
+        android:gravity="center"
+        android:width="160dp"
+        android:height="160dp" />
+</layer-list>

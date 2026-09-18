@@ -4,6 +4,7 @@ import Dashboard from './components/Dashboard';
 import TrackingDisplay from './components/TrackingDisplay';
 import Analytics from './components/Analytics';
 import BrandMark from './components/BrandMark';
+import Icon from './components/Icon';
 import LaunchOverlay from './components/LaunchOverlay';
 import { trackingService } from './services/tracking';
 
@@ -44,21 +45,27 @@ function App() {
 
       <nav className="app-nav">
         <button
+          type="button"
           className={`nav-btn ${currentTab === 'tracking' ? 'active' : ''}`}
           onClick={() => setCurrentTab('tracking')}
         >
+          <Icon name="crosshair" />
           Tracking
         </button>
         <button
+          type="button"
           className={`nav-btn ${currentTab === 'dashboard' ? 'active' : ''}`}
           onClick={() => setCurrentTab('dashboard')}
         >
+          <Icon name="gauge" />
           Dashboard
         </button>
         <button
+          type="button"
           className={`nav-btn ${currentTab === 'analytics' ? 'active' : ''}`}
           onClick={() => setCurrentTab('analytics')}
         >
+          <Icon name="chart" />
           Analytics
         </button>
       </nav>

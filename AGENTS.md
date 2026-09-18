@@ -16,9 +16,10 @@ component, and the APK reads no `.env` file.
 ```bash
 npm install
 npm run build        # web bundle -> dist/
-npm run apk          # dist/ + cap sync + gradle assembleDebug
+npm run apk          # debug: dist/ + cap sync + gradle assembleDebug
+npm run apk:publish  # signed release, runs the tests and verifies the signature
 npm run preview      # serve dist/ on port 4173
-npm run test:vision  # JS vision vs Python reference
+npm test             # config + pipeline + vision parity
 ```
 
 The debug APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`.
@@ -63,23 +64,48 @@ clean of lint errors; remaining warnings are icon/dependency noise.
   plugin class without registering it fails silently at runtime.
 - `android/local.properties` is gitignored, so a fresh checkout has no SDK
   path. Write `sdk.dir=...` into it before running gradle.
+- `DEFAULT_CONFIG` in `src/services/tracking.js` is the config the whole app
+  treats as the source of truth. A key that is read but never declared there
+  arrives as `undefined`, and each layer below then substitutes its own private
+  default — so the config silently stops having any effect. `npm run
+  test:config` guards the frame-transport keys.
+- `ImageBitmap.close()` resets `width` and `height` to 0. `grabNativeFrame` in
+  `src/services/capture/index.js` therefore reads them before closing; doing it
+  afterwards produced frames that `detectObjects` rejected outright, so the
+  Android build captured frames and never reported a single detection. The
+  bitmap stub in `scripts/check-pipeline.mjs` reproduces that reset so
+  `npm run test:pipeline` catches a regression.
+- The release build is only signed when `android/keystore.properties` exists.
+  Without it gradle emits `app-release-unsigned.apk`, which devices and stores
+  reject; `npm run apk:publish` fails fast instead of shipping that. Neither
+  that file nor `*.jks` is committed.
 
 ## Branding
 
 `scripts/generate_brand_assets.py` is the single source of truth for the
-launcher icon and splash PNGs; `scripts/gen_splash_vector.py` emits
-`splash_icon.xml` for the Android 12+ splash slot. Both write into
-`android/app/src/main/res/`, so regenerate and commit rather than editing the
-PNGs by hand. `src/components/BrandMark.jsx` mirrors the same geometry for the
-in-app header, so a change to the mark means changing it in both places.
+launcher icon PNGs; `scripts/gen_splash_vector.py` emits `splash_icon.xml` for
+the Android 12+ splash slot. Both write into `android/app/src/main/res/`, so
+regenerate and commit rather than editing the PNGs by hand.
+`src/components/BrandMark.jsx` mirrors the same geometry for the in-app header,
+so a change to the mark means changing it in both places.
 
-Three things that are easy to get wrong here:
+The splash is a vector, not a bitmap. `drawable/splash_screen.xml` is a
+layer-list that puts the mark on the splash background for pre-Android-12
+launches, where `windowSplashScreen*` does nothing; on Android 12+ the system
+draws `splash_icon.xml` instead. There is deliberately no `splash.png` — one
+raster per density produced five byte-identical files that tripped
+`IconDipSize`/`IconDuplicatesConfig` and added ~120KB to the APK.
+
+Four things that are easy to get wrong here:
 
 - `ic_launcher_background` must stay black. It was white, and because the
   adaptive foreground is white ink the icon rendered invisible.
 - The adaptive foreground is scaled to fit the 72dp safe zone's inscribed
   circle. Scaling it up to match the legacy icons makes round launcher masks
   clip the mark's corners.
+- The legacy `ic_launcher.png` carries its own inset plate rather than filling
+  the tile. Legacy icons are shown unmasked, and one that fills every pixel
+  reads as a blocky square next to the adaptive icons on the same launcher.
 - The rasteriser that generates the PNGs ignores SVG `mask` elements. The
   reticle hole in the X is an evenodd `clipPath`, which is also why the in-app
   `BrandMark` uses a clip path and not a coloured disc.

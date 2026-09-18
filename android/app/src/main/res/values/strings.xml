@@ -2,6 +2,9 @@
 <resources>
     <string name="app_name">Favie X Tracker</string>
     <string name="title_activity_main">Favie X Tracker</string>
-    <string name="package_name">com.favie.xtracker</string>
-    <string name="custom_url_scheme">com.favie.xtracker</string>
+
+    <!-- Foreground capture notification. -->
+    <string name="capture_notification_text">Screen tracking is active</string>
+    <string name="capture_channel_name">Screen tracking</string>
+    <string name="capture_channel_description">Shown while Favie X Tracker is capturing the screen</string>
 </resources>

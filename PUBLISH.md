@@ -1,320 +1,150 @@
 # Publishing Guide - Favie X Tracker
 
-## 📦 Option 1: Build Standalone Desktop Executables (RECOMMENDED)
+This project ships an **Android APK** built with Capacitor. It is not an
+Electron desktop app: the `electron/`, `public/` and Flask-backend fragments
+that earlier versions of this document described were never committed and are
+not part of the build. `npm run build` produces a web bundle, not an installer.
 
-This creates .exe (Windows), .dmg (macOS), and .AppImage (Linux) files.
+## What you get
 
-### Prerequisites
+| Command | Output | Use |
+| --- | --- | --- |
+| `npm run apk` | `android/app/build/outputs/apk/debug/app-debug.apk` | Local testing, sideloading |
+| `npm run apk:release` | `.../apk/release/app-release.apk` (signed) | Distribution |
+| `npm run apk:publish` | same as above, plus tests and a signature check | Cutting a release |
+
+`npm run apk:publish` is the one to use for a release. It runs the config and
+vision-parity tests first, refuses to continue if signing is not configured, and
+verifies the signature afterwards.
+
+## Prerequisites
+
+- **Node.js 20+**
+- **JDK 21** — Capacitor 7 requires it
+- **Android SDK** with `platforms;android-35` and `build-tools;35.0.0`
+
 ```bash
-# Make sure you're in the repo root
-cd Favie-X-Tracker-
-
-# Install dependencies
 npm install
-pip install -r requirements.txt
 ```
 
-### Build for Your Platform
+`android/local.properties` is gitignored, so a fresh checkout has no SDK path.
+Write `sdk.dir=/path/to/android-sdk` into it before running gradle.
 
-#### Windows (.exe)
+## One-time: create a signing key
+
+A release APK must be signed to be installable, and Play requires every update
+to use the same key. Create it once and keep it safe — losing it means you can
+never update the app under the same identity.
+
 ```bash
-npm run build
+keytool -genkeypair -v \
+  -keystore android/favie-release.jks \
+  -alias favie \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=Favie X Tracker, O=Favie, C=US"
+
+cp android/keystore.properties.example android/keystore.properties
+# then fill in the passwords you just chose
 ```
-Output: `dist/Favie X Tracker Setup 1.0.0.exe`
 
-#### macOS (.dmg)
+Both `android/keystore.properties` and `*.jks` are gitignored. Do not commit
+either one, and do not paste their contents into an issue or a chat.
+
+Without `keystore.properties` the release build still succeeds but emits
+`app-release-unsigned.apk`, which stores and devices will reject.
+`npm run apk:publish` fails early instead of letting you ship that.
+
+## Build a release
+
 ```bash
-npm run build
+npm run apk:publish
 ```
-Output: `dist/Favie X Tracker-1.0.0.dmg`
 
-#### Linux (.AppImage)
+It ends by printing the signed APK path and the signer certificate, so you can
+confirm the artifact is the one you expect.
+
+## Distribute via GitHub Releases
+
+The simplest free option, and a good fit for a sideloaded app.
+
 ```bash
-npm run build
-```
-Output: `dist/Favie X Tracker-1.0.0.AppImage`
-
----
-
-## 📤 Option 2: Publish to GitHub Releases (FREE)
-
-Make your app available for download from your GitHub repo.
-
-### Step 1: Create a Release
-```bash
-# Commit your changes (if any)
-git add .
-git commit -m "v1.0.0 - Initial Release"
-
-# Create a tag
-git tag -a v1.0.0 -m "First production release"
-
-# Push to GitHub
-git push origin main
+git tag -a v1.0.0 -m "Favie X Tracker v1.0.0"
 git push origin v1.0.0
-```
-
-### Step 2: Build Executables
-```bash
-npm run build
-```
-
-### Step 3: Upload to GitHub Releases
-
-**Option A: Via GitHub Web UI**
-1. Go to https://github.com/favie1963-lgtm/Favie-X-Tracker-
-2. Click **Releases** (right sidebar)
-3. Click **Create a new release**
-4. Select tag: `v1.0.0`
-5. Title: `Favie X Tracker v1.0.0`
-6. Add description:
-```
-🎉 First Release
-
-## Features
-- Real-time screen tracking
-- AI-powered object detection
-- Cup tracking for games
-- Advanced analytics & reports
-- Desktop app (Windows, macOS, Linux)
-
-## Downloads
-- Windows: Favie X Tracker Setup 1.0.0.exe
-- macOS: Favie X Tracker-1.0.0.dmg
-- Linux: Favie X Tracker-1.0.0.AppImage
-```
-7. Upload files from `dist/` folder
-8. Click **Publish release**
-
-**Option B: Via GitHub CLI**
-```bash
-npm run build
 
 gh release create v1.0.0 \
   --title "Favie X Tracker v1.0.0" \
-  --notes "Initial release with screen tracking and analytics" \
-  dist/*
+  --notes "On-device screen capture, object detection and cup tracking." \
+  android/app/build/outputs/apk/release/app-release.apk
 ```
 
----
+Then point people at
+`https://github.com/favie1963-lgtm/Favie-X-Tracker-/releases`.
 
-## 🌐 Option 3: Publish to App Stores
+Users install it by enabling "install unknown apps" for their browser or file
+manager and opening the APK. Because it is sideloaded, Play Protect may warn
+that the app is from an unknown developer.
 
-### Windows Store (Microsoft Store)
-1. Get a Microsoft Partner account
-2. Join Microsoft Partner Center
-3. Submit your app (requires review, ~24-48 hours)
-4. Use Windows App Packaging Project in Electron-builder
+## Distribute via Google Play
 
-### macOS App Store
-1. Create Apple Developer account ($99/year)
-2. Generate certificates for code signing
-3. Configure in `package.json`:
-```json
-{
-  "build": {
-    "appId": "com.favie.tracker",
-    "mac": {
-      "certificateFile": "path/to/certificate.p12",
-      "certificatePassword": "${CSC_KEY_PASSWORD}"
-    }
-  }
-}
-```
-4. Submit via App Store Connect
+1. Create a Google Play Developer account (one-off USD 25).
+2. In Play Console, create the app and upload the **signed** release APK
+   (or an AAB — see below).
+3. Complete the Data safety form. This app captures the screen and stores
+   session history on-device; it has no server component and uploads nothing.
+   Declare the capture behaviour accurately.
+4. Complete the content rating questionnaire.
+5. Roll out to an internal testing track first, then production.
 
-### Snap Store (Linux)
+### If Play asks for an AAB
+
+Play prefers an Android App Bundle over an APK for new apps. The project is
+already set up for it:
+
 ```bash
-# Install snapcraft
-sudo apt install snapcraft
-
-# Create snap
-snapcraft
-
-# Upload
-snapcraft upload favie-x-tracker_1.0.0_amd64.snap
+npm run build:android && cd android && ./gradlew bundleRelease
 ```
 
----
+The bundle lands in `android/app/build/outputs/bundle/release/`. It is signed
+with the same `keystore.properties` when that file is present.
 
-## 🚀 Option 4: Publish via Package Managers
+### Play submission notes
 
-### Homebrew (macOS)
-1. Create a tap: `homebrew-favie-tracker`
-2. Add formula file
-3. Users install: `brew install favie1963-lgtm/favie-tracker/favie-x-tracker`
+- The app requests `FOREGROUND_SERVICE_MEDIA_PROJECTION` and shows a persistent
+  notification while capturing. Play scrutinises screen-capture apps, so the
+  store listing must make the purpose obvious.
+- Play requires a privacy policy URL for apps that capture the screen. Even
+  though everything is on-device, provide one that says so.
+- Set `versionCode` and `versionName` in `android/app/build.gradle` before each
+  upload. `versionCode` must strictly increase.
 
-### Chocolatey (Windows)
-1. Create package
-2. Submit to Chocolatey
-3. Users install: `choco install favie-x-tracker`
+## Versioning
 
-### Snap (Linux)
-```bash
-snapcraft push favie-x-tracker_1.0.0_amd64.snap --release=stable
-```
+Both values live in `android/app/build.gradle`:
 
----
-
-## 🔐 Code Signing (For Distribution)
-
-### macOS Code Signing
-```bash
-# Generate certificate (requires Apple Developer account)
-# Then configure in electron-builder
-
-npm run build -- --mac
-```
-
-### Windows Code Signing
-```bash
-# Get signing certificate
-# Configure in electron-builder
-
-npm run build -- --win
-```
-
----
-
-## 📝 Update Your package.json for Publishing
-
-Before building, update this section:
-
-```json
-{
-  "name": "favie-x-tracker",
-  "version": "1.0.0",
-  "description": "Screen tracking with AI analysis and cup detection",
-  "author": "favie1963-lgtm <favie1963@gmail.com>",
-  "homepage": "https://github.com/favie1963-lgtm/Favie-X-Tracker-",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/favie1963-lgtm/Favie-X-Tracker-"
-  },
-  "build": {
-    "appId": "com.favie.tracker",
-    "productName": "Favie X Tracker",
-    "files": [
-      "build/**/*",
-      "electron/**/*",
-      "node_modules/**/*"
-    ],
-    "directories": {
-      "buildResources": "assets"
-    },
-    "win": {
-      "target": ["nsis", "portable"]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "mac": {
-      "target": ["dmg", "zip"]
-    },
-    "linux": {
-      "target": ["AppImage", "deb"]
-    }
-  }
+```gradle
+defaultConfig {
+    versionCode 1
+    versionName "1.0"
 }
 ```
 
----
+Bump `versionCode` for every Play upload. The in-app footer version comes from
+`package.json`, so keep the two in step.
 
-## 🎯 Recommended Publishing Path (TODAY!)
-
-### Step 1: Build Executables (10 minutes)
-```bash
-npm run build
-```
-
-### Step 2: Create GitHub Release (5 minutes)
-```bash
-git tag -a v1.0.0 -m "First release"
-git push origin v1.0.0
-```
-
-Then go to: https://github.com/favie1963-lgtm/Favie-X-Tracker-/releases
-- Click "Create release"
-- Upload the files from `dist/` folder
-- Publish!
-
-### Step 3: Share Download Link
-Share: `https://github.com/favie1963-lgtm/Favie-X-Tracker-/releases/tag/v1.0.0`
-
-Users can download and run directly!
-
----
-
-## 📊 Distribution Comparison
-
-| Method | Time | Cost | Users | Support |
-|--------|------|------|-------|---------|
-| **GitHub Releases** | 15 min | FREE | Tech-savvy | Direct link |
-| **Windows Installer** | 30 min | FREE | Windows users | .exe installer |
-| **App Stores** | 1-2 days | $99-299 | All users | Official store |
-| **Homebrew** | 1 hour | FREE | macOS users | `brew install` |
-| **Chocolatey** | 1 hour | FREE | Windows users | `choco install` |
-
----
-
-## 🔄 Continuous Updates
-
-### Auto-Updates Setup
-```bash
-# Install electron-updater
-npm install electron-updater
-
-# In electron/main.js:
-const { autoUpdater } = require('electron-updater');
-autoUpdater.checkForUpdatesAndNotify();
-```
-
-Then users get updates automatically!
-
----
-
-## 🎁 Extra: Create an Installer Wizard
-
-Your current build already includes:
-- ✅ Auto-installer (NSIS for Windows)
-- ✅ DMG installer (macOS)
-- ✅ AppImage (Linux)
-
-Just run: `npm run build`
-
----
-
-## ❓ FAQ
-
-**Q: Do I need to sign my app?**
-A: For public distribution, yes (but optional for GitHub releases)
-
-**Q: How do I update users?**
-A: Use electron-updater for automatic updates
-
-**Q: Can I sell it?**
-A: Yes! Change license from MIT to commercial
-
-**Q: How many downloads can GitHub handle?**
-A: Unlimited!
-
----
-
-## ✅ PUBLISH TODAY - QUICK SUMMARY
+## Verifying an artifact before you ship it
 
 ```bash
-# 1. Build executables
-npm run build
-
-# 2. Create GitHub release tag
-git tag -a v1.0.0 -m "Initial release"
-git push origin v1.0.0
-
-# 3. Go to GitHub and upload files from dist/ folder
-
-# 4. Share the release link!
-# https://github.com/favie1963-lgtm/Favie-X-Tracker-/releases
+export ANDROID_HOME=/path/to/android-sdk
+$ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs \
+  android/app/build/outputs/apk/release/app-release.apk
 ```
 
-**That's it! Your app is live!** 🚀
+Check that the signer DN matches your key. `npm run apk:publish` runs this for
+you, but it is worth knowing how to do it by hand.
+
+## Continuous integration
+
+`.github/workflows/webpack.yml` runs the vision-parity and config tests and the
+web build on every push and pull request to `main`. It does not build an APK or
+hold signing keys — release artifacts are built locally, where the keystore
+lives.

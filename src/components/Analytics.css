@@ -1,124 +1,149 @@
 .analytics {
   padding: 20px;
+  padding-left: calc(20px + env(safe-area-inset-left));
+  padding-right: calc(20px + env(safe-area-inset-right));
   max-width: 1200px;
   margin: 0 auto;
-}
-
-.analytics-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-  border-bottom: 2px solid #007bff;
-  padding-bottom: 10px;
-}
-
-.generate-btn {
-  padding: 10px 20px;
-  background: #28a745;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: bold;
-}
-
-.generate-btn:hover:not(:disabled) {
-  background: #218838;
-}
-
-.generate-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 15px;
-  margin-bottom: 30px;
+  gap: 12px;
+  margin-bottom: var(--gap);
 }
 
 .card {
-  background: white;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
   text-align: center;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  transition: transform 0.2s ease;
-}
-
-.card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
 }
 
 .card h4 {
-  margin: 0 0 10px 0;
-  color: #6c757d;
-  font-size: 12px;
+  margin: 0 0 8px 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .big-number {
-  font-size: 28px;
-  font-weight: bold;
-  color: #007bff;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
-.report-section {
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
-  margin-top: 30px;
+.report-section,
+.cup-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 18px;
+  border-radius: var(--radius);
+  margin-top: var(--gap);
+}
+
+.report-section .panel-header {
+  margin-bottom: 16px;
+}
+
+.report-section h3,
+.cup-section h3 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sub-heading {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 16px 0 8px;
+}
+
+.cup-count {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.cup-list {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.cup-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 9px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 .chart-container {
-  background: white;
-  padding: 20px;
-  border-radius: 6px;
-  margin-bottom: 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  background: var(--surface-raised);
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  margin-bottom: var(--gap);
 }
 
 .chart-container h4 {
-  margin-top: 0;
-  color: #495057;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 15px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: var(--gap);
 }
 
 .metric {
-  background: white;
-  padding: 15px;
-  border-radius: 6px;
-  border-left: 4px solid #ffc107;
+  background: var(--surface-raised);
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
 }
 
 .metric h4 {
-  margin: 0 0 10px 0;
-  color: #6c757d;
-  font-size: 12px;
+  margin: 0 0 8px 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .metric p {
-  font-size: 24px;
-  font-weight: bold;
-  color: #ffc107;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
-.loading {
+.empty-message {
   text-align: center;
-  padding: 40px;
-  color: #6c757d;
-  font-size: 16px;
+  color: var(--text-faint);
+  padding: 40px 16px;
+  font-size: 13px;
 }
