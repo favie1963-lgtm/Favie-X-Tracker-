@@ -17,7 +17,8 @@
     <string name="toolbar_cancel">Cancel</string>
     <string name="toolbar_close">Close</string>
     <string name="toolbar_ready">Ready</string>
-    <string name="toolbar_selecting">Tap an object</string>
+    <string name="toolbar_selecting">Tap an object to select it</string>
     <string name="toolbar_tracking">Target locked</string>
     <string name="toolbar_lost">Target lost</string>
+    <string name="marker_selecting">Tap the object to track</string>
 </resources>

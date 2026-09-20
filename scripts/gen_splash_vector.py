@@ -31,6 +31,9 @@ GAP = 5.5  # along the diagonal; reads as a small reticle opening
 
 SCALE = 0.8  # keeps the mark inside the circular mask the system applies
 
+RULE_GAP = 18.0  # between the foot of the mark and the rule
+RULE_H = 1.5
+
 
 def mark_paths(ox, oy, scale):
     """The mark's drawable paths, placed at (ox, oy) and scaled.
@@ -104,17 +107,21 @@ def splash_mark():
     mark reads as a deliberate composition; faking lettering with stroked paths
     would not.
 
-    The mark is nudged above centre to leave room for the rule, which is what
-    makes the composed screen look intentional rather than top-heavy.
+    The mark and the rule are centred *as a block*, not the mark alone: the
+    drawable is placed at a fixed size in the launch background, so a mark pinned
+    near the top left the lower third of the canvas empty and the launch screen
+    read as top-heavy.
     """
+    block_h = MARK_H * SCALE + RULE_GAP + RULE_H
+    oy = (VIEW - block_h) / 2.0
     ox = (VIEW - MARK_W * SCALE) / 2
-    oy = 16.0
     body = mark_paths(ox, oy, SCALE)
 
-    rule_y = oy + MARK_H * SCALE + 18.0
+    rule_y = oy + MARK_H * SCALE + RULE_GAP
     body.append(
         f'    <path android:fillColor="#40FFFFFF" '
-        f'android:pathData="M34,{rule_y} L74,{rule_y} L74,{rule_y + 1.5} L34,{rule_y + 1.5} Z"/>'
+        f'android:pathData="M34,{round(rule_y, 2)} L74,{round(rule_y, 2)} '
+        f'L74,{round(rule_y + RULE_H, 2)} L34,{round(rule_y + RULE_H, 2)} Z"/>'
     )
 
     return [

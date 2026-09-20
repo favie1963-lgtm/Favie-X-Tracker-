@@ -38,5 +38,8 @@ jobs:
     - name: Tracking pipeline tests
       run: npm run test:pipeline
 
+    - name: Target tracking tests
+      run: npm run test:target
+
     - name: Build
       run: npm run build

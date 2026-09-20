@@ -38,6 +38,10 @@ jobs:
           # requires JDK 21 (JDK 17 is no longer accepted).
           java-version: 21
 
+      - name: Run unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest
+
       - name: Build APK
         working-directory: android
         run: ./gradlew assembleDebug

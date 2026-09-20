@@ -39,10 +39,17 @@ public class TargetMarkerView extends View {
     private static final int MODE_LOST = 3;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** Reused across frames; the label plate is drawn on every capture tick. */
+    private final RectF plateRect = new RectF();
     private final float density;
     private TapListener tapListener;
 
     private int mode = MODE_IDLE;
+
+    /** Last selection tap, in frame coordinates, forwarded by {@link #performClick}. */
+    private float lastTapX;
+    private float lastTapY;
 
     private final RectF markerRect = new RectF();
     private boolean hasMarker = false;
@@ -182,8 +189,8 @@ public class TargetMarkerView extends View {
             if (plateY < dp(4)) plateY = bottom + dp(4);
 
             paint.setColor(0xE6101010);
-            RectF plate = new RectF(plateX, plateY, plateX + plateW, plateY + plateH);
-            canvas.drawRoundRect(plate, dp(5), dp(5), paint);
+            plateRect.set(plateX, plateY, plateX + plateW, plateY + plateH);
+            canvas.drawRoundRect(plateRect, dp(5), dp(5), paint);
 
             paint.setColor(Color.WHITE);
             canvas.drawText(label, plateX + padH, plateY + plateH - padV - dp(1), paint);
@@ -205,7 +212,7 @@ public class TargetMarkerView extends View {
 
         float cx = getWidth() / 2f;
         float cy = dp(96);
-        String text = "Tap the object to track";
+        String text = getResources().getString(R.string.marker_selecting);
         float textWidth = paint.measureText(text);
         float padH = dp(18);
         float plateH = dp(40);
@@ -237,12 +244,24 @@ public class TargetMarkerView extends View {
                 frameY = rawY * (frameHeight / (float) screenHeight);
             }
 
-            if (tapListener != null) {
-                tapListener.onTargetTap(frameX, frameY);
-            }
+            lastTapX = frameX;
+            lastTapY = frameY;
+            // Route the gesture through performClick so accessibility services,
+            // which invoke it directly rather than synthesising a touch, select
+            // the target too.
+            performClick();
             return true;
         }
 
+        return true;
+    }
+
+    @Override
+    public boolean performClick() {
+        super.performClick();
+        if (tapListener != null) {
+            tapListener.onTargetTap(lastTapX, lastTapY);
+        }
         return true;
     }
 

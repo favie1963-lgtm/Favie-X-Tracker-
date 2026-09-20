@@ -39,6 +39,12 @@ public class NativeTargetTracker {
     /** Region growing stops once this fraction of the frame is filled. */
     private static final double MAX_REGION_FRACTION = 0.5;
 
+    /**
+     * Lower bound on the search window, as a fraction of the shorter frame edge.
+     * Kept in step with the {@code 0.12} in {@code TargetTracker#searchRadius}.
+     */
+    private static final float FRAME_RADIUS_FRACTION = 0.12f;
+
     private final float maxShift;
     private final float matchThreshold;
     private final int lostGraceFrames;
@@ -58,7 +64,7 @@ public class NativeTargetTracker {
     private long lastSeenAt = 0L;
 
     public NativeTargetTracker() {
-        this(0.35f, 0.35f, 5);
+        this(0.35f, 0.82f, 5);
     }
 
     public NativeTargetTracker(float maxShift, float matchThreshold, int lostGraceFrames) {
@@ -262,7 +268,13 @@ public class NativeTargetTracker {
     private Match search(int[] argb, int width, int height) {
         int w = Math.max(1, Math.round(boxW));
         int h = Math.max(1, Math.round(boxH));
-        int radius = Math.max(3, Math.round(Math.max(w, h) * maxShift));
+
+        // Mirrors TargetTracker#searchRadius: scaled to the target's own size but
+        // floored by a fraction of the frame, so a small object on a slow capture
+        // interval is not lost to ordinary motion. The floor is far smaller than
+        // the frame, which is what keeps a distant look-alike out of reach.
+        int radius = Math.max(3, Math.round(Math.max(Math.max(w, h) * maxShift,
+                Math.min(width, height) * FRAME_RADIUS_FRACTION)));
 
         int originX = Math.round(boxX);
         int originY = Math.round(boxY);
@@ -298,7 +310,19 @@ public class NativeTargetTracker {
         return best;
     }
 
-    /** Mean absolute RGB difference between a region and the template, in [0,1]. */
+    /**
+     * Mean per-cell largest-channel difference between a region and the template,
+     * as a similarity in [0, 1].
+     *
+     * This mirrors {@code TargetTracker#scoreRegion} in
+     * {@code src/services/vision/tracker.js}. It deliberately does not sum the
+     * three channels into the divisor: that metric lets a uniformly wrong region
+     * score about 0.5, which reads as a match under any sane threshold, so a
+     * target that had left the frame would be "tracked" onto empty background
+     * instead of being reported lost. Using the largest channel per cell puts a
+     * fully mismatched region near 0.45 and a correct track above 0.9, leaving a
+     * wide gap for the threshold to sit in.
+     */
     private float scoreRegion(int[] argb, int width, int x0, int y0, int w, int h) {
         long sum = 0;
         for (int gy = 0; gy < SIG; gy++) {
@@ -307,12 +331,13 @@ public class NativeTargetTracker {
                 int sx = x0 + Math.min(w - 1, (int) Math.floor(((gx + 0.5) * w) / SIG));
                 int c = argb[sy * width + sx];
                 int o = (gy * SIG + gx) * 3;
-                sum += Math.abs(((c >> 16) & 0xFF) - signature[o]);
-                sum += Math.abs(((c >> 8) & 0xFF) - signature[o + 1]);
-                sum += Math.abs((c & 0xFF) - signature[o + 2]);
+                int dr = Math.abs(((c >> 16) & 0xFF) - signature[o]);
+                int dg = Math.abs(((c >> 8) & 0xFF) - signature[o + 1]);
+                int db = Math.abs((c & 0xFF) - signature[o + 2]);
+                sum += Math.max(dr, Math.max(dg, db));
             }
         }
-        return 1f - (sum / (float) (SIG * SIG * 3 * 255));
+        return 1f - (sum / (float) (SIG * SIG * 255));
     }
 
     private int[] extractSignature(int[] argb, int width, int height, float bx, float by,

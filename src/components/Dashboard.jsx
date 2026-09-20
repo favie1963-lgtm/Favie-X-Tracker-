@@ -118,15 +118,19 @@ function Dashboard({ status }) {
       run('capture', () => (next ? trackingService.start() : trackingService.stop()));
       return;
     }
+    // The capture switch is the master control: turning it on grants consent and
+    // starts the foreground service (which owns the projection and the overlay),
+    // turning it off stops the service outright.
     run('capture', () =>
       next ? trackingService.enableToolbar() : trackingService.disableToolbar(),
     );
   };
 
   const handleToolbarToggle = (next) => {
-    run('toolbar', () =>
-      next ? trackingService.enableToolbar() : trackingService.disableToolbar(),
-    );
+    if (!supported) return;
+    // The toolbar switch only shows or hides the floating window; capture keeps
+    // running either way, so hiding the bar is not a way to stop tracking.
+    run('toolbar', () => trackingService.setToolbarVisible(next));
   };
 
   const handleClearTarget = () => {

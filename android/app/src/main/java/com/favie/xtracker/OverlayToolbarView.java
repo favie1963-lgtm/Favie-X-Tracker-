@@ -73,6 +73,9 @@ public class OverlayToolbarView extends View {
     private boolean dragging = false;
     private final float touchSlop;
 
+    /** Action queued by the touch handler, dispatched by {@link #performClick}. */
+    private String pendingAction;
+
     public OverlayToolbarView(Context context, Listener listener) {
         super(context);
         this.listener = listener;
@@ -80,6 +83,17 @@ public class OverlayToolbarView extends View {
         this.touchSlop = 8f * density;
         setLayerType(LAYER_TYPE_SOFTWARE, null);
         rebuildButtons();
+    }
+
+    /**
+     * Inflater-shaped constructor.
+     *
+     * The toolbar is always built in code, because an overlay window has no theme
+     * context to inflate against. This exists so layout tooling can instantiate
+     * the view; `listener` stays null and {@link #performClick} is a no-op.
+     */
+    public OverlayToolbarView(Context context) {
+        this(context, null);
     }
 
     private float dp(float value) {
@@ -115,26 +129,30 @@ public class OverlayToolbarView extends View {
         buttons.clear();
         switch (state) {
             case STATE_SELECTING:
-                buttons.add(new Button(ACTION_CANCEL_SELECT, "Cancel", false));
-                buttons.add(new Button(ACTION_CLOSE, "Close", false));
+                buttons.add(new Button(ACTION_CANCEL_SELECT, str(R.string.toolbar_cancel), false));
+                buttons.add(new Button(ACTION_CLOSE, str(R.string.toolbar_close), false));
                 break;
             case STATE_TRACKING:
-                buttons.add(new Button(ACTION_CHANGE, "Change target", false));
-                buttons.add(new Button(ACTION_STOP, "Stop", true));
-                buttons.add(new Button(ACTION_CLOSE, "Close", false));
+                buttons.add(new Button(ACTION_CHANGE, str(R.string.toolbar_change), false));
+                buttons.add(new Button(ACTION_STOP, str(R.string.toolbar_stop), true));
+                buttons.add(new Button(ACTION_CLOSE, str(R.string.toolbar_close), false));
                 break;
             case STATE_LOST:
-                buttons.add(new Button(ACTION_REACQUIRE, "Reacquire", true));
-                buttons.add(new Button(ACTION_CLEAR, "Clear", false));
-                buttons.add(new Button(ACTION_CLOSE, "Close", false));
+                buttons.add(new Button(ACTION_REACQUIRE, str(R.string.toolbar_reacquire), true));
+                buttons.add(new Button(ACTION_CLEAR, str(R.string.toolbar_clear), false));
+                buttons.add(new Button(ACTION_CLOSE, str(R.string.toolbar_close), false));
                 break;
             case STATE_READY:
             default:
-                buttons.add(new Button(ACTION_SELECT, "Select target", true));
-                buttons.add(new Button(ACTION_CLOSE, "Close", false));
+                buttons.add(new Button(ACTION_SELECT, str(R.string.toolbar_select), true));
+                buttons.add(new Button(ACTION_CLOSE, str(R.string.toolbar_close), false));
                 break;
         }
         invalidate();
+    }
+
+    private String str(int resId) {
+        return getResources().getString(resId);
     }
 
     /** Called by the service so the select button can reflect tracker state. */
@@ -177,20 +195,20 @@ public class OverlayToolbarView extends View {
         int statusColor;
         switch (state) {
             case STATE_SELECTING:
-                statusText = "Tap an object";
+                statusText = str(R.string.toolbar_selecting);
                 statusColor = COLOR_SELECTING;
                 break;
             case STATE_TRACKING:
-                statusText = "Target locked";
+                statusText = str(R.string.toolbar_tracking);
                 statusColor = COLOR_READY;
                 break;
             case STATE_LOST:
-                statusText = "Target lost";
+                statusText = str(R.string.toolbar_lost);
                 statusColor = COLOR_LOST;
                 break;
             case STATE_READY:
             default:
-                statusText = "Ready";
+                statusText = str(R.string.toolbar_ready);
                 statusColor = COLOR_READY;
                 break;
         }
@@ -301,10 +319,13 @@ public class OverlayToolbarView extends View {
 
             case MotionEvent.ACTION_UP:
                 if (!dragging && pressedIndex >= 0 && pressedIndex < buttons.size()) {
-                    String action = buttons.get(pressedIndex).action;
+                    pendingAction = buttons.get(pressedIndex).action;
                     pressedIndex = -1;
                     invalidate();
-                    listener.onAction(action);
+                    // Via performClick so accessibility services, which call it
+                    // directly instead of synthesising a touch, hit the button too.
+                    performClick();
+                    return true;
                 }
                 pressedIndex = -1;
                 dragging = false;
@@ -327,6 +348,17 @@ public class OverlayToolbarView extends View {
             if (buttons.get(i).rect.contains(x, y)) return i;
         }
         return -1;
+    }
+
+    @Override
+    public boolean performClick() {
+        super.performClick();
+        if (pendingAction != null && listener != null) {
+            String action = pendingAction;
+            pendingAction = null;
+            listener.onAction(action);
+        }
+        return true;
     }
 
     /** Optional extra callback so the service can reposition the window. */
