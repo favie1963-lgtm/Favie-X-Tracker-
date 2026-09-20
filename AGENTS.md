@@ -19,7 +19,7 @@ npm run build        # web bundle -> dist/
 npm run apk          # debug: dist/ + cap sync + gradle assembleDebug
 npm run apk:publish  # signed release, runs the tests and verifies the signature
 npm run preview      # serve dist/ on port 4173
-npm test             # config + pipeline + vision parity
+npm test             # config + pipeline + target + vision parity
 ```
 
 The debug APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`.
@@ -37,6 +37,11 @@ fixture, run the generator — that is expected, not a broken test.
 
 Android lint: `cd android && ./gradlew :app:lintDebug`. The project builds
 clean of lint errors; remaining warnings are icon/dependency noise.
+
+Native unit tests: `cd android && ./gradlew :app:testDebugUnitTest`. These cover
+`NativeTargetTracker`, the on-device twin of the JS tracker, and are the only
+tests for the Android-only code path. `assembleDebug` does not compile test
+sources, so running it alone will not catch a broken test.
 
 ## Layout
 
@@ -79,6 +84,15 @@ clean of lint errors; remaining warnings are icon/dependency noise.
   Without it gradle emits `app-release-unsigned.apk`, which devices and stores
   reject; `npm run apk:publish` fails fast instead of shipping that. Neither
   that file nor `*.jks` is committed.
+- The tracker exists twice: `src/services/vision/tracker.js` for the browser and
+  `NativeTargetTracker.java` for the on-device path, and the app uses the Java
+  one on Android. They were allowed to drift: the Java similarity metric summed
+  the three colour channels where JS averages the largest difference per cell,
+  and the Java default threshold stayed at 0.35 against JS's 0.82, so the
+  native tracker matched flat background and never reported a lost target. Any
+  change to the metric, the threshold, or the search-radius rule belongs in both
+  files, and `NativeTargetTrackerTest` plus `npm run test:target` are the two
+  guards.
 
 ## Branding
 
