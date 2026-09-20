@@ -6,16 +6,18 @@ import './LaunchOverlay.css';
  * Brand intro shown over the app while it boots.
  *
  * The native splash is a static image, so this layer is what carries the
- * animation: the mark settles in, the name follows, and the whole overlay then
- * fades to reveal the app. It renders on the first frame, so it covers the gap
- * between the native splash going away and React painting the real UI.
+ * transition: the mark settles in, the name follows, then the whole overlay fades
+ * to reveal the app. It renders on the first frame, so it covers the gap between
+ * the native splash going away and React painting the real UI.
  *
  * The composition deliberately mirrors the native splash (mark above a baseline
- * rule) so the two read as one continuous screen rather than a cut.
+ * rule) so the two read as one continuous screen rather than a cut. The hold is
+ * short: a launch screen that overstays is worse than no launch screen, and the
+ * app is interactive underneath as soon as it fades.
  *
  * The overlay is skipped entirely when the user has asked for reduced motion.
  */
-const HOLD_MS = 1500;
+const HOLD_MS = 1100;
 
 export default function LaunchOverlay() {
   const [done, setDone] = useState(false);

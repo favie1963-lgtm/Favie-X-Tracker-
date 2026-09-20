@@ -39,9 +39,16 @@ Android lint: `cd android && ./gradlew :app:lintDebug`. The project builds
 clean of lint errors; remaining warnings are icon/dependency noise.
 
 Native unit tests: `cd android && ./gradlew :app:testDebugUnitTest`. These cover
-`NativeTargetTracker`, the on-device twin of the JS tracker, and are the only
-tests for the Android-only code path. `assembleDebug` does not compile test
-sources, so running it alone will not catch a broken test.
+`NativeTargetTracker`, the on-device twin of the JS tracker, and `OverlayToolbarView`,
+the floating toolbar. Both are the only tests for the Android-only code path.
+`assembleDebug` does not compile test sources, so running it alone will not catch a
+broken test.
+
+`OverlayToolbarViewTest` runs under Robolectric (`unitTests.includeAndroidResources`
+is on for it) so the toolbar's per-state button sets and hit-testing can be asserted on
+the JVM — no emulator is available in CI. A toolbar that draws its controls but routes
+taps to stale rectangles is a real bug class, and the test reaches the geometry through
+the same `layoutButtons` the draw pass uses.
 
 ## Layout
 
@@ -80,6 +87,12 @@ sources, so running it alone will not catch a broken test.
   Android build captured frames and never reported a single detection. The
   bitmap stub in `scripts/check-pipeline.mjs` reproduces that reset so
   `npm run test:pipeline` catches a regression.
+- `CaptureEngine.captureFrame` returns the previous decode marked `fresh == false`
+  when the display produced nothing new, because a static screen is the normal case
+  while the user lines up a target and returning null made selection miss. Anything
+  that advances a session — the frame counter, the tracker — must skip a frame where
+  `fresh` is false, or it burns CPU re-analysing identical pixels. `frameForTap`
+  deliberately does not require freshness; it serves the latest picture.
 - The release build is only signed when `android/keystore.properties` exists.
   Without it gradle emits `app-release-unsigned.apk`, which devices and stores
   reject; `npm run apk:publish` fails fast instead of shipping that. Neither

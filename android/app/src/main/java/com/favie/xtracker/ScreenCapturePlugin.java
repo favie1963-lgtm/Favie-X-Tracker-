@@ -92,9 +92,11 @@ public class ScreenCapturePlugin extends Plugin {
         if (service != null) {
             service.requestStopFromUi();
         } else {
-            Intent intent = new Intent(getContext(), ScreenCaptureService.class);
-            intent.putExtra(ScreenCaptureService.EXTRA_STOP, true);
-            getContext().startService(intent);
+            // No live instance in this process, so there is nothing to tear down;
+            // stopService is used as a belt-and-braces call because it is safe from
+            // the background, unlike startService, which throws on API 26+ when the
+            // app is not in the foreground.
+            getContext().stopService(new Intent(getContext(), ScreenCaptureService.class));
         }
         call.resolve(overlayStatus());
     }
@@ -142,6 +144,35 @@ public class ScreenCapturePlugin extends Plugin {
         if ("select".equals(mode)) {
             service.requestSelectionFromUi();
         }
+        call.resolve(overlayStatus());
+    }
+
+    /**
+     * Reacquire the locked target at its last known position.
+     *
+     * Mirrors the toolbar's own Reacquire button so the dashboard's copy of the
+     * control can drive the same service code.
+     */
+    @PluginMethod
+    public void reacquireTarget(PluginCall call) {
+        ScreenCaptureService service = ScreenCaptureService.getInstance();
+        if (service == null) {
+            call.reject("The tracking toolbar is not running");
+            return;
+        }
+        service.reacquireFromUi();
+        call.resolve(overlayStatus());
+    }
+
+    /** Drop the current target. */
+    @PluginMethod
+    public void clearTarget(PluginCall call) {
+        ScreenCaptureService service = ScreenCaptureService.getInstance();
+        if (service == null) {
+            call.reject("The tracking toolbar is not running");
+            return;
+        }
+        service.clearTargetFromUi();
         call.resolve(overlayStatus());
     }
 

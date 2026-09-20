@@ -287,8 +287,21 @@ export class TrackingService {
    * Reacquisition is deliberately explicit: the user asks for it, and it either
    * succeeds at the tracked location or fails visibly. It never substitutes a
    * different object.
+   *
+   * On Android the overlay owns the tracker and the marker, so the request is
+   * forwarded to it and this side does not keep a parallel lock that would drift
+   * from what is drawn on screen.
    */
-  reacquireTarget() {
+  async reacquireTarget() {
+    if (this.isToolbarSupported()) {
+      const result = await overlayToolbar.reacquireTarget();
+      await this.refreshNativeStatus();
+      this.emit();
+      return result?.status === 'error'
+        ? result
+        : { status: 'reacquired' };
+    }
+
     if (!this.targetTracker.target) {
       return { status: 'error', message: 'No target to reacquire' };
     }
@@ -297,18 +310,27 @@ export class TrackingService {
       return { status: 'error', message: 'No frame available to reacquire from' };
     }
 
-    const { centroid, bbox } = this.targetTracker.target;
+    const { centroid } = this.targetTracker.target;
     const report = this.targetTracker.select(frame, this.lastDetections, {
       x: centroid.x,
       y: centroid.y,
     });
-    void bbox;
     this.emit();
     return { status: 'reacquired', target: report.target };
   }
 
-  /** Clear the target entirely. */
+  /**
+   * Clear the target entirely.
+   *
+   * Forwarded to the overlay on Android for the same reason as reacquisition:
+   * one tracker, one marker.
+   */
   clearTarget() {
+    if (this.isToolbarSupported()) {
+      const result = overlayToolbar.clearTarget();
+      this.emit();
+      return result;
+    }
     this.targetTracker.reset();
     this.emit();
     return { status: 'cleared' };

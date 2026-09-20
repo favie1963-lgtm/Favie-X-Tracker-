@@ -73,6 +73,29 @@ export const overlayToolbar = {
     }
   },
 
+  /**
+   * Reacquire the locked target at its last known position.
+   *
+   * The toolbar's own Reacquire button is the normal path; this lets the
+   * dashboard's copy drive the same service call.
+   */
+  async reacquireTarget() {
+    try {
+      return await ScreenCapture.reacquireTarget();
+    } catch (error) {
+      return { status: 'error', message: error?.message ?? 'Unable to reacquire the target' };
+    }
+  },
+
+  /** Drop the current target. */
+  async clearTarget() {
+    try {
+      return await ScreenCapture.clearTarget();
+    } catch (error) {
+      return { status: 'error', message: error?.message ?? 'Unable to clear the target' };
+    }
+  },
+
   /** Whether overlay permission has been granted. */
   async hasOverlayPermission() {
     try {

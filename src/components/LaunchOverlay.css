@@ -8,7 +8,7 @@
   align-items: center;
   justify-content: center;
   background: #000;
-  animation: launch-fade 1500ms ease-in forwards;
+  animation: launch-fade 1100ms ease-in forwards;
 }
 
 .launch-content {
@@ -20,8 +20,9 @@
 
 .launch-mark {
   color: #fff;
-  /* Settle from slightly overscaled, then breathe once. */
-  animation: launch-zoom 1500ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  /* Settle from slightly overscaled. One small move reads as polish; a bounce
+     reads as a toy, which is why the mark no longer overshoots. */
+  animation: launch-zoom 1100ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* Matches the native splash composition: mark, then the name over a rule. The
@@ -33,23 +34,23 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: #fff;
-  animation: launch-name 1500ms ease forwards;
+  animation: launch-name 1100ms ease forwards;
 }
 
 .launch-rule {
   width: 64px;
   height: 1.5px;
   background: rgba(255, 255, 255, 0.25);
-  animation: launch-name 1500ms ease forwards;
+  animation: launch-name 1100ms ease forwards;
 }
 
 @keyframes launch-name {
   0%,
-  25% {
+  30% {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(3px);
   }
-  55%,
+  65%,
   100% {
     opacity: 1;
     transform: translateY(0);
@@ -58,20 +59,11 @@
 
 @keyframes launch-zoom {
   0% {
-    transform: scale(1.18);
+    transform: scale(1.08);
     opacity: 0;
   }
-  18% {
+  25% {
     opacity: 1;
-  }
-  45% {
-    transform: scale(1);
-  }
-  60% {
-    transform: scale(1.06);
-  }
-  75% {
-    transform: scale(1);
   }
   100% {
     transform: scale(1);
@@ -82,7 +74,7 @@
 /* Hold, then fade the whole layer so the app shows through. */
 @keyframes launch-fade {
   0%,
-  68% {
+  72% {
     opacity: 1;
     pointer-events: auto;
   }

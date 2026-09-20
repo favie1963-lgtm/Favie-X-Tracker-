@@ -14,6 +14,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
+import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.WindowManager;
 
@@ -190,17 +191,65 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
     }
 
+    /**
+     * Re-anchor the toolbar after a rotation or a display-size change.
+     *
+     * The Activity declares {@code configChanges} so it is not recreated, but the
+     * service is not an Activity: the window manager keeps the overlay window
+     * alive across a rotation and its stored x/y then refer to a screen that no
+     * longer exists, which can leave the toolbar off-screen.
+     *
+     * The marker needs no handling here: the capture loop refreshes its geometry
+     * from every frame, including a reused one, so it re-scales on the next tick.
+     * A rotation also changes the captured display size, which the platform
+     * reports through {@code onCapturedContentResize}; that path rebuilds the
+     * virtual display and is left untouched.
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        mainHandler.post(() -> {
+            if (toolbarView == null || toolbarParams == null) return;
+            clampToolbar();
+            try {
+                windowManager.updateViewLayout(toolbarView, toolbarParams);
+            } catch (Exception ignored) {
+                // Window already gone.
+            }
+        });
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && intent.getBooleanExtra(EXTRA_STOP, false)) {
+        // A null intent means the system re-created the service on its own, not
+        // that the user (or the plugin) asked for capture. A MediaProjection
+        // cannot be restored — the platform requires fresh consent for every
+        // session — so there would be nothing to capture. Rather than linger as a
+        // foreground service posting an indefinite notification for a session that
+        // cannot work, shut down and let the user start again from the app.
+        if (intent == null) {
+            // Enter the foreground first purely to satisfy the platform's
+            // foreground-service contract, then leave: a service started via
+            // startForegroundService that stops without ever calling
+            // startForeground is killed with ForegroundServiceDidNotStartInTime.
+            enterForeground();
+            stopCapture();
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        if (intent.getBooleanExtra(EXTRA_STOP, false)) {
+            enterForeground();
             stopCapture();
             stopSelf();
             return START_NOT_STICKY;
         }
 
         // Reaching the foreground is what lets the projection exist, so the
-        // notification is posted before anything else can fail.
-        startForegroundWithNotification();
+        // notification is posted before anything else can fail. This is the only
+        // path that announces readiness: a projection can be attached from here on.
+        enterForeground();
+        sendBroadcast(new Intent(ACTION_READY).setPackage(getPackageName()));
 
         // If a projection is already attached (the user re-opened the app, or the
         // Activity restarted) this is a no-op rather than a restart, so the
@@ -213,7 +262,16 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         return START_NOT_STICKY;
     }
 
-    private void startForegroundWithNotification() {
+    /**
+     * Post the foreground notification and declare the service type.
+     *
+     * Deliberately separate from {@link #onStartCommand}: it sets {@code running}
+     * so a later start can tell the service is alive, but never announces
+     * readiness. The ready broadcast is sent only once a session is actually
+     * being started, so a teardown that also has to pass through the foreground
+     * cannot make the plugin think a projection can be attached.
+     */
+    private void enterForeground() {
         createChannel();
 
         Intent open = new Intent(this, MainActivity.class);
@@ -242,7 +300,6 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         }
 
         running = true;
-        sendBroadcast(new Intent(ACTION_READY).setPackage(getPackageName()));
     }
 
     /**
@@ -283,6 +340,20 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
 
         CaptureEngine.Frame frame = engine.captureFrame(maxFrameWidth, jpegQuality, false);
         if (frame == null) return;
+
+        // A reused frame means the display delivered nothing new (a static screen
+        // is the normal case while the user lines up a target). It is still the
+        // current picture, so the marker geometry is refreshed from it, but it
+        // must not advance the frame counter or the tracker: feeding the tracker
+        // the same pixels over and over would burn CPU and could only ever confirm
+        // a lock it already has.
+        if (!frame.fresh) {
+            if (markerView != null) {
+                markerView.setGeometry(frame.width, frame.height,
+                        engine.getWidth(), engine.getHeight());
+            }
+            return;
+        }
 
         frameCount++;
         long now = System.currentTimeMillis();
@@ -511,11 +582,36 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         if (toolbarParams == null || toolbarView == null) return;
         toolbarParams.x += Math.round(dx);
         toolbarParams.y += Math.round(dy);
+        clampToolbar();
         try {
             windowManager.updateViewLayout(toolbarView, toolbarParams);
         } catch (Exception ignored) {
             // Window already gone.
         }
+    }
+
+    /**
+     * Keep the toolbar inside the screen.
+     *
+     * A drag can otherwise push the bar past an edge, and because the window is
+     * added with {@code WRAP_CONTENT} its size is only known after layout. The
+     * view's measured size is used when available and the display bounds as the
+     * fallback, and the vertical range leaves the status and navigation bars
+     * reachable rather than parking the bar underneath them.
+     */
+    private void clampToolbar() {
+        if (toolbarParams == null || toolbarView == null) return;
+
+        DisplayMetrics metrics = getResources().getDisplayMetrics();
+        int viewW = toolbarView.getWidth() > 0 ? toolbarView.getWidth() : toolbarView.getMeasuredWidth();
+        int viewH = toolbarView.getHeight() > 0 ? toolbarView.getHeight() : toolbarView.getMeasuredHeight();
+        if (viewW <= 0) viewW = Math.round(236 * metrics.density);
+        if (viewH <= 0) viewH = Math.round(96 * metrics.density);
+
+        int maxX = Math.max(0, metrics.widthPixels - viewW);
+        int maxY = Math.max(0, metrics.heightPixels - viewH);
+        toolbarParams.x = Math.max(0, Math.min(maxX, toolbarParams.x));
+        toolbarParams.y = Math.max(0, Math.min(maxY, toolbarParams.y));
     }
 
     private void beginSelection() {
@@ -543,21 +639,22 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     /**
      * Handle a tap in the selection overlay.
      *
-     * The frame is taken from the engine's peak hold rather than a fresh grab: the
-     * capture loop has already decoded the newest frame, and re-grabbing here would
-     * both cost a second decode and risk the reader having nothing new, which is
-     * exactly what made earlier selection attempts fail intermittently.
+     * The frame comes from the engine's remembered latest decode rather than a
+     * fresh grab: the capture loop has already decoded the newest frame, and
+     * re-grabbing here would both cost a second decode and risk the reader having
+     * nothing new. That last case is what used to make selection fail on a static
+     * screen, so the engine now serves its most recent picture instead.
      *
-     * A tap never falls back to "pick something similar". If there is no frame to
-     * resolve it against the selection stays active and the user is told, rather
-     * than a different object being chosen behind their back.
+     * A tap never falls back to "pick something similar". If there is genuinely
+     * nothing decoded yet the selection stays active and the user can tap again,
+     * rather than a different object being chosen behind their back.
      */
     private void handleTargetTap(float frameX, float frameY) {
         if (frameX < 0 || frameY < 0) return;
 
         CaptureEngine.Frame frame = engine.frameForTap();
         if (frame == null) {
-            // No new frame yet. Keep selection active so the user can tap again.
+            // Nothing has been captured yet. Keep selection active for a retry.
             broadcastState();
             return;
         }
@@ -575,9 +672,6 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     /** Reacquire explicitly at the last known position; never picks a new object. */
     private void reacquire() {
         CaptureEngine.Frame frame = engine.frameForTap();
-        if (frame == null) {
-            frame = engine.captureFrame(maxFrameWidth, jpegQuality, false);
-        }
         if (frame == null) return;
 
         float cx = tracker.getBoxX() + tracker.getBoxW() / 2f;
@@ -656,6 +750,27 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     /** Enter selection mode from the Activity's mirror UI. */
     public void requestSelectionFromUi() {
         mainHandler.post(this::beginSelection);
+    }
+
+    /**
+     * Reacquire the current target from the Activity's mirror UI.
+     *
+     * The normal path is the toolbar's own Reacquire button; this exists so the
+     * dashboard's copy of the control drives the same code instead of a second
+     * implementation.
+     */
+    public void reacquireFromUi() {
+        mainHandler.post(this::reacquire);
+    }
+
+    /** Drop the target from the Activity's mirror UI. */
+    public void clearTargetFromUi() {
+        mainHandler.post(() -> {
+            tracker.reset();
+            selecting = false;
+            applyMarkerTouchability();
+            broadcastState();
+        });
     }
 
     /** Stop everything from the Activity's mirror UI. */

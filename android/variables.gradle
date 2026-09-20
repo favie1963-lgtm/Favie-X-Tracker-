@@ -13,4 +13,7 @@ ext {
     androidxJunitVersion = '1.2.1'
     androidxEspressoCoreVersion = '3.6.1'
     cordovaAndroidVersion = '10.1.1'
+    // Robolectric runs the overlay views on the JVM for unit tests.
+    robolectricVersion = '4.14.1'
+    androidxTestCoreVersion = '1.6.1'
 }

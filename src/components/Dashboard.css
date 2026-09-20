@@ -59,6 +59,19 @@
   max-width: 46ch;
 }
 
+/* Explains where tracking is controlled, since the home screen deliberately
+   offers no start/stop button. */
+.hero-note {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .hero-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -208,6 +221,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* Trailing side of a status row: the value, plus an optional inline action such
+   as the "Grant" button on the overlay-permission row. */
+.status-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
 }
 
 .status-row-label {

@@ -268,6 +268,8 @@ public class TargetMarkerView extends View {
     /** Human-readable marker caption for the current state. */
     public static String describe(String colorName, float confidence, boolean lost) {
         if (lost) return "TARGET LOST";
+        // A tap on an object the colour detector does not classify still locks, and
+        // reporting that as "target" is honest; inventing a colour would not be.
         String name = colorName == null || colorName.isEmpty() ? "target" : colorName;
         return String.format(Locale.US, "TARGET · %s · %d%%", name, Math.round(confidence));
     }

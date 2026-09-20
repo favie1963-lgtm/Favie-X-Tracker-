@@ -50,6 +50,12 @@ android {
             }
         }
     }
+
+    testOptions {
+        // Robolectric needs the merged resources to resolve the toolbar's strings
+        // and display metrics.
+        unitTests.includeAndroidResources = true
+    }
 }
 
 repositories {
@@ -65,6 +71,12 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    // The overlay toolbar, marker and service are plain Android views; Robolectric
+    // runs them on the JVM so the toolbar's layout and hit-testing can be asserted
+    // without a device (no emulator is available in CI). androidx.test.ext:junit is
+    // for the androidTest build, so the JVM tests get androidx.test:core instead.
+    testImplementation "androidx.test:core:$androidxTestCoreVersion"
+    testImplementation "org.robolectric:robolectric:$robolectricVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

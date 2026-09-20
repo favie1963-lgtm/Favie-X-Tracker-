@@ -148,6 +148,9 @@ public class CaptureEngine {
 
     private void releaseLocked() {
         releaseDisplayLocked();
+        // Drop the remembered picture too: it belongs to the display that just
+        // went away, and a later session must not lock onto it.
+        resetTapPeak();
         if (projection != null) {
             try {
                 projection.stop();
@@ -170,84 +173,99 @@ public class CaptureEngine {
         public final int height;
         public final String dataUrl;
         public final long sequence;
+        /**
+         * Whether this frame was decoded from a newly delivered image.
+         *
+         * A reused frame ({@code fresh == false}) is the previous decode handed
+         * back because the display produced nothing new. Consumers that drive a
+         * session forward — frame counters, tracking — ignore the reused copy;
+         * consumers that need the current picture, such as tap hit-testing and
+         * the preview, still get pixels instead of nothing.
+         */
+        public final boolean fresh;
 
-        Frame(int[] argb, int width, int height, String dataUrl, long sequence) {
+        Frame(int[] argb, int width, int height, String dataUrl, long sequence, boolean fresh) {
             this.argb = argb;
             this.width = width;
             this.height = height;
             this.dataUrl = dataUrl;
             this.sequence = sequence;
+            this.fresh = fresh;
         }
     }
 
-    /** A copy of the last decoded frame, used to hit-test a tap after the fact. */
-    private static class PeakFrame {
+    /** The most recent decode, kept so a tap or a preview can be served without
+     *  waiting for the display to produce a new image. */
+    private static class LatestFrame {
         int[] argb;
         int width;
         int height;
         long sequence;
+        String dataUrl;
 
         boolean hasContent() {
             return argb != null && width > 0 && height > 0;
         }
     }
 
-    private final PeakFrame peak = new PeakFrame();
-    private final Object peakLock = new Object();
-
-    /** Highest frame sequence the caller has consumed for tap hit-testing. */
-    private long tapConsumedSequence = 0L;
+    private final LatestFrame latest = new LatestFrame();
+    private final Object latestLock = new Object();
 
     /**
-     * Discard the frame a tap should be tested against.
+     * Discard the picture a tap should be tested against.
      *
      * Called when selection mode begins so the user's tap is matched against a
-     * frame captured after they started looking, not one from a moment earlier.
+     * frame captured after they started looking. The capture loop refills this
+     * within one tick.
      */
     public void resetTapPeak() {
-        synchronized (peakLock) {
-            peak.argb = null;
-            peak.width = 0;
-            peak.height = 0;
-            peak.sequence = 0;
+        synchronized (latestLock) {
+            latest.argb = null;
+            latest.width = 0;
+            latest.height = 0;
+            latest.sequence = 0L;
+            latest.dataUrl = null;
+        }
+    }
+
+    /** Record the newest decode for later tap hit-testing and preview use. */
+    private void rememberForTap(Frame frame, int[] argb, String dataUrl) {
+        synchronized (latestLock) {
+            latest.argb = argb;
+            latest.width = frame.width;
+            latest.height = frame.height;
+            latest.sequence = frame.sequence;
+            latest.dataUrl = dataUrl;
         }
     }
 
     /**
-     * Record the newest decoded frame for later tap hit-testing.
+     * The picture to hit-test a tap against, or null before the first decode.
      *
-     * Kept separate from {@link #captureFrame} so the capture loop can maintain it
-     * without paying for a second decode when the toolbar asks to resolve a tap.
-     */
-    private void rememberForTap(Frame frame, int[] argb) {
-        synchronized (peakLock) {
-            peak.argb = argb;
-            peak.width = frame.width;
-            peak.height = frame.height;
-            peak.sequence = frame.sequence;
-        }
-    }
-
-    /**
-     * Frame to hit-test a tap against, or null if nothing new is available.
-     *
-     * Returns the frame only once per sequence, so a repeated call without new
-     * frames reports "nothing to select from" instead of silently re-using a stale
-     * image.
+     * This deliberately hands back the most recent decode rather than insisting on
+     * an unseen one. A static screen — the common case when a user is lining up a
+     * tap on a paused frame — makes {@link ImageReader} deliver nothing, and the
+     * previous "one tap per new frame" rule then silently swallowed the tap: the
+     * user tapped an object and nothing happened. The picture is at most one
+     * capture interval old, so reusing it is both correct and what makes selection
+     * dependable.
      */
     public Frame frameForTap() {
-        synchronized (peakLock) {
-            if (!peak.hasContent() || peak.sequence == tapConsumedSequence) return null;
-            tapConsumedSequence = peak.sequence;
-            return new Frame(peak.argb, peak.width, peak.height, null, peak.sequence);
+        synchronized (latestLock) {
+            if (!latest.hasContent()) return null;
+            return new Frame(latest.argb, latest.width, latest.height, latest.dataUrl,
+                    latest.sequence, false);
         }
     }
 
     /**
      * Capture the newest frame, scaled to {@code maxWidth} and JPEG-encoded.
      *
-     * @return the frame, or null when no new frame has arrived since the last
-     *   grab (the caller simply tries again on the next tick)
+     * When the display has produced nothing since the last call the previous
+     * decode is returned marked as not fresh, so callers that only need the
+     * current picture still work while callers that advance a session can skip it.
+     *
+     * @return the frame, or null when no frame has ever been decoded
      */
     public Frame captureFrame(int maxWidth, int quality, boolean wantDataUrl) {
         ImageReader reader;
@@ -263,12 +281,12 @@ public class CaptureEngine {
             // The reader was closed by a concurrent resize/teardown.
             return null;
         }
-        if (image == null) return null;
+        if (image == null) return reuseLatest(wantDataUrl);
 
         Bitmap bitmap = null;
         try {
             bitmap = imageToBitmap(image);
-            if (bitmap == null) return null;
+            if (bitmap == null) return reuseLatest(wantDataUrl);
 
             if (maxWidth > 0 && bitmap.getWidth() > maxWidth) {
                 int targetHeight = Math.max(1,
@@ -297,14 +315,28 @@ public class CaptureEngine {
             synchronized (lock) {
                 seq = ++frameCounter;
             }
-            Frame frame = new Frame(argb, w, h, dataUrl, seq);
-            rememberForTap(frame, argb);
+            Frame frame = new Frame(argb, w, h, dataUrl, seq, true);
+            rememberForTap(frame, argb, dataUrl);
             return frame;
         } catch (Exception e) {
-            return null;
+            return reuseLatest(wantDataUrl);
         } finally {
             if (bitmap != null) bitmap.recycle();
             image.close();
+        }
+    }
+
+    /**
+     * The previous decode, marked not fresh, or null if nothing has been decoded.
+     *
+     * The ARGB buffer is shared with the caller rather than copied: the capture
+     * loop replaces it wholesale on the next decode, and no consumer mutates it.
+     */
+    private Frame reuseLatest(boolean wantDataUrl) {
+        synchronized (latestLock) {
+            if (!latest.hasContent()) return null;
+            return new Frame(latest.argb, latest.width, latest.height,
+                    wantDataUrl ? latest.dataUrl : null, latest.sequence, false);
         }
     }
 
