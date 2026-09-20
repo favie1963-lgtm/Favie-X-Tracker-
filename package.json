@@ -24,7 +24,8 @@
     "test:vision": "node scripts/vision-parity.mjs",
     "test:config": "node scripts/check-config-plumbing.mjs",
     "test:pipeline": "node scripts/check-pipeline.mjs",
-    "test": "npm run test:config && npm run test:pipeline && npm run test:vision"
+    "test": "npm run test:config && npm run test:pipeline && npm run test:target && npm run test:vision",
+    "test:target": "node scripts/check-target-tracking.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

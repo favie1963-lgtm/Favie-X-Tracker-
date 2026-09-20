@@ -6,20 +6,9 @@
  * Every call is feature-detected so the web build keeps working without it.
  */
 
-import { registerPlugin, Capacitor } from '@capacitor/core';
+import ScreenCapture, { isNativeCaptureAvailable, isAndroid } from './plugin.js';
 
-const ScreenCapture = registerPlugin('ScreenCapture');
-
-export function isNativeCaptureAvailable() {
-  return (
-    Capacitor.isNativePlatform() &&
-    Capacitor.isPluginAvailable('ScreenCapture')
-  );
-}
-
-export function isAndroid() {
-  return Capacitor.getPlatform() === 'android';
-}
+export { isNativeCaptureAvailable, isAndroid };
 
 export const nativeCapture = {
   /** Prompt the user for consent and start the foreground capture service. */

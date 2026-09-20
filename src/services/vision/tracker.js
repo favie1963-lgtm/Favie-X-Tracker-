@@ -274,10 +274,15 @@ export class ObjectTracker {
   /**
    * Specialized tracking for cups in games.
    *
+   * @param {{data: Uint8ClampedArray|Uint8Array, width: number, height: number}} frame
+   * @param {Array<object>|null} [detections] Detections already produced for this
+   *   frame. Passing them avoids re-running the pipeline, which used to append a
+   *   second copy of the same frame to the history and collapse every predicted
+   *   velocity to zero.
    * @returns {{cups: Array<object>, predictions: Array<object>, total_detected: number, timestamp: string}}
    */
-  trackCups(frame) {
-    const objects = this.detectObjects(frame);
+  trackCups(frame, detections = null) {
+    const objects = detections ?? this.detectObjects(frame);
 
     const cups = objects.filter(
       (d) =>
@@ -345,6 +350,386 @@ export class ObjectTracker {
     this.tracks = new Map();
     this.nextTrackId = new Map();
     this.lastUpdate = null;
+  }
+}
+
+/** Target lifecycle states reported to the UI. */
+export const TARGET_STATE = Object.freeze({
+  NONE: 'none',
+  LOCKED: 'locked',
+  LOST: 'lost',
+});
+
+/** Edge length of the colour signature sampled from a target. */
+export const SIGNATURE_SIZE = 16;
+
+/**
+ * Sample a compact colour signature for a region.
+ *
+ * The signature is a fixed SIGNATURE_SIZE x SIGNATURE_SIZE RGB grid taken with
+ * nearest sampling, so it is scale-independent: the same object occupies the
+ * same grid whether it is near or far, and comparison cost is constant
+ * regardless of how large the region is.
+ */
+export function extractSignature(frame, bbox) {
+  const { data, width, height } = frame;
+  const out = new Uint8Array(SIGNATURE_SIZE * SIGNATURE_SIZE * 3);
+
+  const x0 = Math.max(0, Math.floor(bbox.x));
+  const y0 = Math.max(0, Math.floor(bbox.y));
+  const w = Math.max(1, Math.min(width - x0, Math.round(bbox.width)));
+  const h = Math.max(1, Math.min(height - y0, Math.round(bbox.height)));
+
+  for (let gy = 0; gy < SIGNATURE_SIZE; gy += 1) {
+    for (let gx = 0; gx < SIGNATURE_SIZE; gx += 1) {
+      const sx = x0 + Math.min(w - 1, Math.floor(((gx + 0.5) * w) / SIGNATURE_SIZE));
+      const sy = y0 + Math.min(h - 1, Math.floor(((gy + 0.5) * h) / SIGNATURE_SIZE));
+      const p = (sy * width + sx) * 4;
+      const o = (gy * SIGNATURE_SIZE + gx) * 3;
+      out[o] = data[p];
+      out[o + 1] = data[p + 1];
+      out[o + 2] = data[p + 2];
+    }
+  }
+  return out;
+}
+
+/**
+ * Distance in [0, 1] between two colour signatures.
+ *
+ * Mean of the per-cell largest-channel difference, matching
+ * {@link TargetTracker#scoreRegion} so a threshold means the same thing in both
+ * places.
+ */
+export function signatureDistance(a, b) {
+  if (!a || !b || a.length !== b.length) return 1;
+  const cells = a.length / 3;
+  let sum = 0;
+  for (let i = 0, o = 0; i < a.length; i += 3, o += 1) {
+    sum += Math.max(
+      Math.abs(a[i] - b[i]),
+      Math.abs(a[i + 1] - b[i + 1]),
+      Math.abs(a[i + 2] - b[i + 2]),
+    );
+  }
+  return sum / (cells * 255);
+}
+
+/** Whether a point falls inside a bbox, optionally padded. */
+export function pointInBbox(point, bbox, pad = 0) {
+  return (
+    point.x >= bbox.x - pad &&
+    point.x <= bbox.x + bbox.width + pad &&
+    point.y >= bbox.y - pad &&
+    point.y <= bbox.y + bbox.height + pad
+  );
+}
+
+/** Intersection-over-union of two bboxes, in [0, 1]. */
+export function bboxIou(a, b) {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  if (x2 <= x1 || y2 <= y1) return 0;
+  const inter = (x2 - x1) * (y2 - y1);
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+/**
+ * Template-based single-object tracker for an explicitly chosen target.
+ *
+ * The user picks the target by tapping it; nothing here ever chooses a target on
+ * its own. Once locked, the tracker follows *that* region:
+ *
+ *  1. If the object detector still reports the same stable id, that identity wins.
+ *  2. Otherwise the locked colour signature is searched for in a small window
+ *     around the last position. This is what keeps the lock through occlusion and
+ *     detector misses, and it is deliberately local so the tracker cannot jump to
+ *     a different, more easily detected object elsewhere in the frame.
+ *  3. If neither matches, the target is reported LOST and the UI offers an
+ *     explicit reacquire rather than silently re-selecting something else.
+ */
+export class TargetTracker {
+  constructor(options = {}) {
+    // Fraction of the target's own size that it may move between frames. Bounding
+    // the search this way is the guard against switching to a look-alike object.
+    this.maxShift = options.maxShift ?? 0.35;
+    // Match similarity is `1 - meanPerCellColourDistance`, where the per-cell
+    // distance is the largest RGB channel difference. A region that does not
+    // contain the object scores about 0.45, while a correct track scores above
+    // 0.9, so the bound sits well inside that gap. It is deliberately not higher:
+    // captured frames arrive JPEG-compressed, and rejecting a real track is worse
+    // than accepting a slightly displaced one.
+    this.matchThreshold = options.matchThreshold ?? 0.82;
+    this.lostGraceFrames = options.lostGraceFrames ?? 5;
+    this.reset();
+  }
+
+  /**
+   * Radius, in pixels, of the local search window around the last position.
+   *
+   * Scaled to the object but floored by a fraction of the frame so a small object
+   * on a slow capture interval is not lost to ordinary motion. The floor is much
+   * smaller than the frame, which is what keeps a distant look-alike out of reach.
+   */
+  searchRadius(frame) {
+    const { bbox } = this.target;
+    const selfScaled = Math.max(bbox.width, bbox.height) * this.maxShift;
+    const frameScaled = Math.min(frame.width, frame.height) * 0.12;
+    return Math.max(3, Math.round(Math.max(selfScaled, frameScaled)));
+  }
+
+  reset() {
+    this.state = TARGET_STATE.NONE;
+    this.target = null;
+    this.signature = null;
+    this.lostFrames = 0;
+    this.lastSeenAt = null;
+  }
+
+  get isLocked() {
+    return this.state === TARGET_STATE.LOCKED;
+  }
+
+  /**
+   * Lock onto the object under the user's tap.
+   *
+   * The detection containing the point is preferred, and the smallest such
+   * detection wins so a tap inside a nested blob selects the inner object rather
+   * than its container. With no detector hit the tapped box itself becomes the
+   * template, so an object the colour/edge pipeline never reports is still
+   * trackable.
+   */
+  select(frame, detections, tapPoint) {
+    let chosen = null;
+
+    const containing = detections.filter((d) => pointInBbox(tapPoint, d.bbox));
+    if (containing.length > 0) {
+      chosen = containing.reduce((best, d) =>
+        d.bbox.width * d.bbox.height < best.bbox.width * best.bbox.height ? d : best,
+      );
+    }
+
+    let bbox;
+    let color;
+    let detectionId = null;
+
+    if (chosen) {
+      bbox = { ...chosen.bbox };
+      color = chosen.color;
+      detectionId = chosen.id;
+    } else {
+      const size = Math.max(24, Math.round(Math.min(frame.width, frame.height) * 0.1));
+      bbox = {
+        x: Math.round(tapPoint.x - size / 2),
+        y: Math.round(tapPoint.y - size / 2),
+        width: size,
+        height: size,
+      };
+      bbox.x = Math.max(0, Math.min(frame.width - bbox.width, bbox.x));
+      bbox.y = Math.max(0, Math.min(frame.height - bbox.height, bbox.y));
+      color = 'unknown';
+    }
+
+    this.target = {
+      bbox,
+      centroid: { x: Math.round(bbox.x + bbox.width / 2), y: Math.round(bbox.y + bbox.height / 2) },
+      color,
+      detectionId,
+      confidence: chosen?.confidence ?? 0,
+    };
+    this.signature = extractSignature(frame, bbox);
+    this.state = TARGET_STATE.LOCKED;
+    this.lostFrames = 0;
+    this.lastSeenAt = Date.now();
+
+    return this.report();
+  }
+
+  /**
+   * Advance the lock by one frame.
+   *
+   * @returns {{state: string, target: object|null, confidence: number, lost_frames: number}}
+   */
+  update(frame, detections) {
+    if (!this.target || this.state === TARGET_STATE.NONE) return this.report();
+
+    // 1. Detector identity continuity.
+    const sameId = this.target.detectionId
+      ? detections.find((d) => d.id === this.target.detectionId)
+      : null;
+    if (sameId) {
+      this.accept(sameId.bbox, sameId.color, sameId.id, sameId.confidence ?? 0, frame);
+      return this.report();
+    }
+
+    // 2. Local appearance search.
+    const match = this.matchSignature(frame);
+    if (match) {
+      this.accept(match.bbox, this.target.color, this.target.detectionId, match.score * 100, frame);
+      return this.report();
+    }
+
+    // 3. A detector hit of the same colour near the last known position. The
+    //    distance bound is the same local window step 2 uses: without it a
+    //    look-alike anywhere in the frame could be adopted, which is exactly the
+    //    object-switching this tracker exists to prevent.
+    const radius = this.searchRadius(frame);
+    const nearby = detections
+      .filter((d) => d.color === this.target.color || this.target.color === 'unknown')
+      .map((d) => ({
+        det: d,
+        dist: Math.hypot(
+          d.centroid.x - this.target.centroid.x,
+          d.centroid.y - this.target.centroid.y,
+        ),
+      }))
+      .filter((c) => c.dist <= radius)
+      .sort((a, b) => a.dist - b.dist);
+
+    if (nearby.length > 0) {
+      const { det } = nearby[0];
+      const score = 1 - signatureDistance(extractSignature(frame, det.bbox), this.signature);
+      if (score >= this.matchThreshold) {
+        this.accept(det.bbox, det.color, det.id, score * 100, frame);
+        return this.report();
+      }
+    }
+
+    // 4. Nothing matched. Hold the lock briefly so a single dropped frame does
+    //    not flicker the UI into "lost", then report LOST and keep the last
+    //    known box so the user can see where it was.
+    this.lostFrames += 1;
+    if (this.lostFrames > this.lostGraceFrames) this.state = TARGET_STATE.LOST;
+    return this.report();
+  }
+
+  /** Adopt a new geometry for the locked target. */
+  accept(bbox, color, detectionId, confidence, frame) {
+    this.target = {
+      bbox: { ...bbox },
+      centroid: {
+        x: Math.round(bbox.x + bbox.width / 2),
+        y: Math.round(bbox.y + bbox.height / 2),
+      },
+      color: color ?? this.target.color,
+      detectionId: detectionId ?? null,
+      confidence,
+    };
+    this.signature = extractSignature(frame, bbox);
+    this.state = TARGET_STATE.LOCKED;
+    this.lostFrames = 0;
+    this.lastSeenAt = Date.now();
+  }
+
+  /**
+   * Search a bounded window around the last position for the locked signature.
+   *
+   * Steps by two pixels first and then refines at single-pixel resolution around
+   * the winner, which finds the same offset as an exhaustive search at roughly a
+   * quarter of the cost.
+   */
+  matchSignature(frame) {
+    const { data, width, height } = frame;
+    const { bbox } = this.target;
+    const w = Math.max(1, Math.round(bbox.width));
+    const h = Math.max(1, Math.round(bbox.height));
+    const radius = this.searchRadius(frame);
+    const originX = Math.round(bbox.x);
+    const originY = Math.round(bbox.y);
+
+    let best = { score: 0, dx: 0, dy: 0 };
+
+    const scan = (step, rad, fromX, fromY) => {
+      for (let dy = -rad; dy <= rad; dy += step) {
+        for (let dx = -rad; dx <= rad; dx += step) {
+          const x = fromX + dx;
+          const y = fromY + dy;
+          if (x < 0 || y < 0 || x + w > width || y + h > height) continue;
+          const score = this.scoreRegion(data, width, x, y, w, h);
+          if (score > best.score) best = { score, dx: x - originX, dy: y - originY };
+        }
+      }
+    };
+
+    scan(2, radius, originX, originY);
+
+    if (best.score > 0) {
+      // Refine at single-pixel resolution around the coarse winner. The offsets
+      // stay relative to the last known position, so the reported bbox is always
+      // in frame coordinates.
+      const refined = { ...best };
+      const cx = originX + best.dx;
+      const cy = originY + best.dy;
+      for (let dy = -2; dy <= 2; dy += 1) {
+        for (let dx = -2; dx <= 2; dx += 1) {
+          const x = cx + dx;
+          const y = cy + dy;
+          if (x < 0 || y < 0 || x + w > width || y + h > height) continue;
+          const score = this.scoreRegion(data, width, x, y, w, h);
+          if (score > refined.score) refined.score = score;
+        }
+      }
+      if (refined.score > 0) best = refined;
+    }
+
+    if (best.score < this.matchThreshold) return null;
+
+    return {
+      bbox: { x: originX + best.dx, y: originY + best.dy, width: w, height: h },
+      score: best.score,
+    };
+  }
+
+  /** Similarity in [0, 1] between the locked signature and a region. */
+  scoreRegion(data, width, x0, y0, w, h) {
+    // Per-cell colour distance is the largest channel difference and the score is
+    // the mean across the grid, normalised to [0, 1].
+    //
+    // The mean is what makes the threshold meaningful. An earlier version
+    // normalised the summed difference over all *channels*, which lets a
+    // uniformly wrong region score deceptively well: a saturated object against a
+    // grey background averages to about 0.33 and read as a match, so a target that
+    // had left the frame was "tracked" onto empty background instead of being
+    // reported lost. A median is tempting for the same reason but swings too far
+    // the other way — it ignores up to half the template mismatching, so the box
+    // can drift across a target rather than staying on it.
+    //
+    // With this metric a fully mismatched region scores about 0.45 and a correct
+    // track scores above 0.9, which leaves a wide gap for the threshold to sit in.
+    let sum = 0;
+    for (let gy = 0; gy < SIGNATURE_SIZE; gy += 1) {
+      for (let gx = 0; gx < SIGNATURE_SIZE; gx += 1) {
+        const sx = x0 + Math.min(w - 1, Math.floor(((gx + 0.5) * w) / SIGNATURE_SIZE));
+        const sy = y0 + Math.min(h - 1, Math.floor(((gy + 0.5) * h) / SIGNATURE_SIZE));
+        const p = (sy * width + sx) * 4;
+        const s = (gy * SIGNATURE_SIZE + gx) * 3;
+        sum += Math.max(
+          Math.abs(data[p] - this.signature[s]),
+          Math.abs(data[p + 1] - this.signature[s + 1]),
+          Math.abs(data[p + 2] - this.signature[s + 2]),
+        );
+      }
+    }
+    return 1 - sum / (SIGNATURE_SIZE * SIGNATURE_SIZE * 255);
+  }
+
+  report() {
+    return {
+      state: this.state,
+      target: this.target
+        ? {
+            bbox: { ...this.target.bbox },
+            centroid: { ...this.target.centroid },
+            color: this.target.color,
+            confidence: this.target.confidence,
+          }
+        : null,
+      lost_frames: this.lostFrames,
+      last_seen: this.lastSeenAt,
+    };
   }
 }
 

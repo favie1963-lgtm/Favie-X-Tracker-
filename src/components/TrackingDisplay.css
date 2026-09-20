@@ -92,3 +92,44 @@
   display: grid;
   gap: 6px;
 }
+
+/* Selection / target state banner above the preview. */
+.live-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.live-banner .status-dot {
+  background: #4ade80;
+}
+
+.live-banner.lost {
+  border-color: var(--danger-border);
+  background: var(--danger-surface);
+  color: #ffc9c9;
+}
+
+.live-banner.lost .status-dot {
+  background: var(--danger);
+}
+
+/* Crosshair cursor while the preview is a selection surface. */
+.frame-image.selectable {
+  cursor: crosshair;
+}
+
+.live-note {
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}

@@ -7,4 +7,17 @@
     <string name="capture_notification_text">Screen tracking is active</string>
     <string name="capture_channel_name">Screen tracking</string>
     <string name="capture_channel_description">Shown while Favie X Tracker is capturing the screen</string>
+
+    <!-- On-screen toolbar and target marker. -->
+    <string name="toolbar_select">Select target</string>
+    <string name="toolbar_change">Change target</string>
+    <string name="toolbar_stop">Stop</string>
+    <string name="toolbar_reacquire">Reacquire</string>
+    <string name="toolbar_clear">Clear</string>
+    <string name="toolbar_cancel">Cancel</string>
+    <string name="toolbar_close">Close</string>
+    <string name="toolbar_ready">Ready</string>
+    <string name="toolbar_selecting">Tap an object</string>
+    <string name="toolbar_tracking">Target locked</string>
+    <string name="toolbar_lost">Target lost</string>
 </resources>

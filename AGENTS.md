@@ -109,6 +109,12 @@ Four things that are easy to get wrong here:
 - The rasteriser that generates the PNGs ignores SVG `mask` elements. The
   reticle hole in the X is an evenodd `clipPath`, which is also why the in-app
   `BrandMark` uses a clip path and not a coloured disc.
+- The banner comment `gen_splash_vector.py` emits must not contain `--`. XML
+  forbids a double hyphen inside a comment, and aapt2 rejects the whole drawable
+  at `parseDebugLocalResources` with an unhelpful "Failed to parse XML file"
+  naming no line. The mark-mode banner used to read
+  `gen_splash_vector.py --mark`, which broke the build; it now names the mode in
+  parentheses instead.
 
 ## Setting up a build environment
 

@@ -6,10 +6,12 @@ import './LaunchOverlay.css';
  * Brand intro shown over the app while it boots.
  *
  * The native splash is a static image, so this layer is what carries the
- * animation: the F and X settle in from a slight overscale, breathe once, and
- * the whole overlay then fades to reveal the app. It renders on the first
- * frame, so it covers the gap between the native splash going away and React
- * painting the real UI.
+ * animation: the mark settles in, the name follows, and the whole overlay then
+ * fades to reveal the app. It renders on the first frame, so it covers the gap
+ * between the native splash going away and React painting the real UI.
+ *
+ * The composition deliberately mirrors the native splash (mark above a baseline
+ * rule) so the two read as one continuous screen rather than a cut.
  *
  * The overlay is skipped entirely when the user has asked for reduced motion.
  */
@@ -39,8 +41,12 @@ export default function LaunchOverlay() {
       // A tap during the intro should skip it rather than be swallowed.
       onPointerDown={() => setDone(true)}
     >
-      <div className="launch-mark">
-        <BrandMark size={168} />
+      <div className="launch-content">
+        <div className="launch-mark">
+          <BrandMark size={132} />
+        </div>
+        <p className="launch-name">Favie X Tracker</p>
+        <span className="launch-rule" />
       </div>
     </div>
   );
