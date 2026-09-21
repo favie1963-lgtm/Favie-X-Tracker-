@@ -60,17 +60,7 @@ public class TargetMarkerView extends View {
     private static final float DOT_RING_DP = 2.5f;
 
     /** Padding added around the target's own half-size to form the focus hole. */
-    private static final float FOCUS_MARGIN_DP = 26f;
-
-    /** Smallest focus hole, so a tiny target is not cleared to a pinprick. */
-    private static final float FOCUS_MIN_RADIUS_DP = 52f;
-
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint veilPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-    /** The hollow shape that clears the focus hole out of the veil. */
-    private final Path holePath = new Path();
-    private final RectF holeRect = new RectF();
 
     private final float density;
     private TapListener tapListener;
@@ -83,7 +73,6 @@ public class TargetMarkerView extends View {
 
     private final RectF markerRect = new RectF();
     private boolean hasMarker = false;
-    private boolean focusMode = false;
     private String label = "";
 
     private int frameWidth;
@@ -97,9 +86,6 @@ public class TargetMarkerView extends View {
         setLayerType(LAYER_TYPE_SOFTWARE, null);
         setWillNotDraw(false);
 
-        veilPaint.setColor(Color.BLACK);
-        veilPaint.setStyle(Paint.Style.FILL);
-        holePath.setFillType(Path.FillType.EVEN_ODD);
     }
 
     public void setTapListener(TapListener listener) {
@@ -131,23 +117,6 @@ public class TargetMarkerView extends View {
         return mode;
     }
 
-    /**
-     * Blank the screen except for the tracked object.
-     *
-     * Only has an effect once a target is marked; with nothing to follow the veil
-     * would leave the user looking at a black screen with no way to tell why, so it
-     * is suppressed until a marker exists.
-     */
-    public void setFocusMode(boolean enabled) {
-        if (focusMode == enabled) return;
-        focusMode = enabled;
-        invalidate();
-    }
-
-    public boolean isFocusMode() {
-        return focusMode;
-    }
-
     public void setMarker(float x, float y, float w, float h, String text) {
         markerRect.set(x, y, x + w, y + h);
         hasMarker = true;
@@ -158,9 +127,6 @@ public class TargetMarkerView extends View {
     public void clearMarker() {
         hasMarker = false;
         label = "";
-        // A focus veil with nothing to reveal would black the screen out
-        // completely, so dropping the marker drops the veil with it.
-        focusMode = false;
         invalidate();
     }
 
@@ -194,56 +160,16 @@ public class TargetMarkerView extends View {
         float cx = (left + right) / 2f;
         float cy = (top + bottom) / 2f;
 
-        if (focusMode) drawFocusVeil(canvas, cx, cy, right - left, bottom - top);
-
         drawDot(canvas, cx, cy);
         drawLabel(canvas, cx, cy, bottom);
-    }
-
-    /**
-     * Paint everything black except a circle over the target.
-     *
-     * Using {@code Path.Op.DIFFERENCE} against the view bounds keeps the cleared
-     * region a true circle regardless of the view's size, and the even-odd fill is a
-     * second guarantee that the hole stays hollow if the op is unavailable on an
-     * older platform.
-     */
-    private void drawFocusVeil(Canvas canvas, float cx, float cy, float w, float h) {
-        float radius = focusRadius(w, h, density);
-
-        holeRect.set(cx - radius, cy - radius, cx + radius, cy + radius);
-        holePath.reset();
-        holePath.setFillType(Path.FillType.EVEN_ODD);
-        holePath.addRect(0f, 0f, getWidth(), getHeight(), Path.Direction.CW);
-        holePath.addCircle(cx, cy, radius, Path.Direction.CW);
-        holePath.setFillType(Path.FillType.EVEN_ODD);
-
-        canvas.drawPath(holePath, veilPaint);
-    }
-
-    /**
-     * Radius of the cleared region around the target, in pixels.
-     *
-     * The hole follows the object: it is half of the object's longer side plus a
-     * margin, so a wide or tall object is revealed entirely rather than clipped by a
-     * fixed circle. A floor keeps a very small target from being cleared to a
-     * pinprick the user cannot see through, and the margin is the same padding in
-     * every case so the object never touches the edge of the hole.
-     *
-     * Pulled out as a static so the geometry can be asserted on the JVM, where no
-     * overlay window or display exists.
-     */
-    static float focusRadius(float w, float h, float density) {
-        float half = Math.max(w, h) / 2f + FOCUS_MARGIN_DP * density;
-        return Math.max(half, FOCUS_MIN_RADIUS_DP * density);
     }
 
     /**
      * The marker: a red dot with a thin white ring.
      *
      * Red is the accent the toolbar and the notification already use for the
-     * tracked state, and it stays legible against both the black veil and an
-     * unmasked screen. The ring is what keeps the dot visible when the object
+     * tracked state, and it stays legible on any background. The ring is what keeps
+     * the dot visible when the object
      * underneath happens to be red.
      */
     private void drawDot(Canvas canvas, float cx, float cy) {
@@ -302,7 +228,7 @@ public class TargetMarkerView extends View {
     }
 
     private void drawSelectionHint(Canvas canvas) {
-        // A dim veil makes the "tap an object" affordance unmistakable and shows
+        // A dim wash makes the "tap an object" affordance unmistakable and shows
         // that the overlay, not the app below, is currently receiving input.
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(0x33000000);
@@ -376,5 +302,17 @@ public class TargetMarkerView extends View {
         // reporting that as "target" is honest; inventing a colour would not be.
         String name = colorName == null || colorName.isEmpty() ? "target" : colorName;
         return String.format(Locale.US, "TARGET · %s · %d%%", name, Math.round(confidence));
+    }
+
+    /**
+     * Caption for a cup locked by identity.
+     *
+     * The letter is what the user is following, and the order is the current
+     * left-to-right reading of the shuffle, so the toolbar and the marker agree.
+     */
+    public static String describeCup(String label, String order) {
+        String letter = label == null ? "?" : label;
+        if (order == null || order.isEmpty()) return "CUP " + letter;
+        return "CUP " + letter + " · ORDER " + order;
     }
 }

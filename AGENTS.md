@@ -81,6 +81,32 @@ the same `layoutButtons` the draw pass uses.
   arrives as `undefined`, and each layer below then substitutes its own private
   default — so the config silently stops having any effect. `npm run
   test:config` guards the frame-transport keys.
+- `ScreenCaptureService.tick` runs on a private `HandlerThread`
+  (`xtracker-analysis`), never on the main thread. It decodes a frame and runs the
+  colour scan and cup detection every ~120ms; doing that on the main thread left the
+  process unable to service its own lifecycle callbacks and it was reclaimed as soon
+  as the user opened another app. Everything that touches a `View` is posted back to
+  the main thread inside `tick`, and every access to the tracker or `CupTracker` goes
+  through `targetLock`. Mutating either from the main thread — a tap, a retarget, a
+  reset — must be routed through `onTrackerThread`, not done inline.
+- The service returns `START_STICKY` while a session is live so a process reclaimed
+  under memory pressure is restarted with a null intent, which the null-intent branch
+  uses to restore the toolbar. A projection cannot survive that — it needs fresh
+  consent — so the restore is the toolbar only. The explicit Stop paths return
+  `START_NOT_STICKY`; do not make them sticky or a stopped session comes back.
+- `CupTracker`'s merge test uses `Identity.baseW`, the cup's *own* width, not the
+  width it last adopted. Using the adopted width made the threshold rise with the
+  box: a slightly-too-wide blob raised the bar for the next frame, the box grew
+  about a cup's width per tick, and one identity swallowed all three cups and parked
+  in the middle while the letters scrambled onto the wrong cups. It only misfired at
+  some swap speeds, so sampling a couple of speeds missed it.
+  `CupTrackerTest.lettersSurviveASwapAtEveryRealisticSpeed` walks 5..60 steps.
+- The toolbar's letters strip reads `CupTracker.readout()`, which returns the order
+  and the per-cup positions from one sorted pass. Reading them from two calls let
+  the strip pair a letter with another cup's position on a frame where the order
+  changed between calls. The strip's position mapping is
+  `OverlayToolbarView.chipCenterX`, extracted because Robolectric's default graphics
+  returns a blank bitmap, so a render test cannot see whether the letters moved.
 - `ImageBitmap.close()` resets `width` and `height` to 0. `grabNativeFrame` in
   `src/services/capture/index.js` therefore reads them before closing; doing it
   afterwards produced frames that `detectObjects` rejected outright, so the

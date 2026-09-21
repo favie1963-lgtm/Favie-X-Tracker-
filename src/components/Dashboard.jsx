@@ -130,7 +130,7 @@ function Dashboard({ status }) {
   const running = captureOn || toolbarOn;
   const mode = readMode(supported, native, jsReport);
   const target = readTarget(supported, native, jsReport);
-  const focusOn = Boolean(native?.focus);
+  const cupOrder = native?.cupOrder ?? '';
 
   /** Overlay permission is only reported by the native plugin. */
   const refreshPermission = useCallback(async () => {
@@ -232,20 +232,6 @@ function Dashboard({ status }) {
 
   const handleReacquire = () => {
     run('target', async () => trackingService.reacquireTarget());
-  };
-
-  /**
-   * Blank the screen down to the tracked object, or show everything again.
-   *
-   * Mirrors the toolbar's Isolate/Show all control. The veil is drawn by the native
-   * overlay window, so this only sets service state and the marker does the rest.
-   */
-  const handleFocusToggle = (next) => {
-    if (!supported) return;
-    run('focus', async () => {
-      const result = await trackingService.setFocusMode(next);
-      return result?.status === 'error' ? result : { status: 'ok' };
-    });
   };
 
   const targetLabel = target
@@ -433,14 +419,11 @@ function Dashboard({ status }) {
           </p>
         )}
 
-        <Toggle
-          id="toggle-focus"
-          label="Show only the tracked object"
-          description="Blanks the screen and leaves the target visible. Useful when the surrounding picture is a distraction; the app underneath is untouched."
-          checked={focusOn}
-          disabled={!supported || !target}
-          busy={busy && busyKey === 'focus'}
-          onChange={handleFocusToggle}
+        <StatusRow
+          label="Cup order"
+          value={cupOrder || 'No cups detected'}
+          tone={cupOrder ? 'ok' : 'neutral'}
+          hint="Letters are bound to each cup's identity, so this reading is the shuffle. Select a cup on screen to follow its letter."
         />
       </section>
 

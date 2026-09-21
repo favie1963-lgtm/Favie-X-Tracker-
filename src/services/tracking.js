@@ -400,22 +400,6 @@ export class TrackingService {
     return this.targetTracker.report();
   }
 
-  /**
-   * Blank the screen down to the tracked object, or show everything again.
-   *
-   * The veil is a native overlay window, so on Android this is a state change on the
-   * service and nothing is drawn here. Returns {status:'unsupported'} rather than
-   * pretending to succeed in the browser, where there is no overlay to dim.
-   */
-  async setFocusMode(enabled) {
-    if (this.isToolbarSupported()) {
-      const result = await overlayToolbar.setFocusMode(enabled);
-      this.emit();
-      return result;
-    }
-    return { status: 'unsupported' };
-  }
-
   // --- On-screen toolbar ----------------------------------------------------
 
   /** Whether this build can show the floating toolbar. */

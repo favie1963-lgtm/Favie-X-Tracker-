@@ -221,7 +221,32 @@ public class CaptureEngine {
         surface = null;
     }
 
-    /** Release everything. Safe to call repeatedly. */
+    /**
+     * Drop the scratch bitmaps and the ARGB buffer, keeping the session alive.
+     *
+     * Called from the service's {@code onTrimMemory}. The decode buffers are the
+     * process's largest allocation after the projection itself, and the system asks
+     * for them back at exactly the moment a user-switched-to app is competing for
+     * memory — the situation where the process used to be reclaimed. The next
+     * capture rebuilds them at the current geometry, so the only visible effect is
+     * one frame that reallocates instead of reusing.
+     *
+     * The remembered tap frame is intentionally left alone: a trim can land between
+     * the user entering selection mode and their tap, and discarding the picture
+     * would make that tap do nothing.
+     */
+    public void releaseScratchForTrim() {
+        synchronized (lock) {
+            releaseScratchLocked();
+        }
+    }
+
+    /**
+     * Release the reader, the display and the scratch buffers.
+     *
+     * Called when the projection ends or the service stops. The next session
+     * rebuilds all of it.
+     */
     public void release() {
         synchronized (lock) {
             releaseLocked();

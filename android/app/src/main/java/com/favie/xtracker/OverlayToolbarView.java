@@ -50,9 +50,6 @@ public class OverlayToolbarView extends View {
     public static final String ACTION_REACQUIRE = "reacquire";
     public static final String ACTION_CLEAR = "clear";
     public static final String ACTION_CLOSE = "close";
-    /** Toggle the black-out that leaves only the tracked object visible. */
-    public static final String ACTION_SHOW_ALL = "show-all";
-    public static final String ACTION_ISOLATE = "isolate";
 
     private static final int STATE_READY = 0;
     private static final int STATE_SELECTING = 1;
@@ -67,6 +64,8 @@ public class OverlayToolbarView extends View {
     private static final int COLOR_DIVIDER = 0x1FFFFFFF;
     private static final int COLOR_GRIP = 0x33FFFFFF;
     private static final int COLOR_PILL = 0x1FFFFFFF;
+    /** Chip behind each cup letter in the strip: the brand red, dimmed. */
+    private static final int COLOR_CUP_CHIP = 0x59FF2D3F;
 
     private static final int COLOR_TEXT = 0xFFFFFFFF;
     private static final int COLOR_INK_INVERSE = 0xFFFFFFFF;
@@ -86,11 +85,15 @@ public class OverlayToolbarView extends View {
     private static final int COLOR_LOST = 0xFFFF6B6B;
 
     private static final float CARD_WIDTH_DP = 244f;
-    private static final float CARD_HEIGHT_DP = 104f;
+    private static final float CARD_HEIGHT_DP = 138f;
     private static final float HEADER_BASELINE_DP = 34f;
     private static final float DIVIDER_Y_DP = 46f;
     private static final float BUTTON_TOP_DP = 56f;
     private static final float BUTTON_HEIGHT_DP = 36f;
+    // The letters strip sits below the buttons and mirrors where the cups are.
+    private static final float STRIP_TOP_DP = 102f;
+    private static final float STRIP_HEIGHT_DP = 24f;
+    private static final float STRIP_MARGIN_DP = 12f;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -117,10 +120,21 @@ public class OverlayToolbarView extends View {
     private final RectF pillRect = new RectF();
 
     private int state = STATE_READY;
-    /** Whether the screen is blanked to leave only the tracked object visible. */
-    private boolean focusMode = false;
     private int frameCount = 0;
     private float fps = 0f;
+
+    /** Current left-to-right cup letters, e.g. {@code "B A C"}. */
+    private String cupOrder = "";
+
+    /**
+     * Horizontal position of each cup, 0..1 across the analysed frame.
+     *
+     * This is what the letters strip is drawn from. It is deliberately a separate
+     * input from {@link #cupOrder}: the strip has to show where the cups actually
+     * are, so it is driven by the cups' tracked positions and never by the order
+     * string — the string only says which letter is left of which.
+     */
+    private float[] cupPositions = new float[0];
 
     /** Drag bookkeeping: a press that moves beyond the slop drags the window. */
     private float downX;
@@ -168,6 +182,44 @@ public class OverlayToolbarView extends View {
         invalidate();
     }
 
+    /**
+     * Show the shuffle's current left-to-right order.
+     *
+     * This is the readout the user follows during a shuffle: the letters are bound
+     * to the cups' identities, so the order changing is the shuffle, and it stays
+     * readable even when the cups move faster than the eye can follow.
+     */
+    public void setCupOrder(String order) {
+        String next = order == null ? "" : order;
+        // Positions belong to the cups the order names, so dropping the order drops
+        // them too; a later frame repopulates both together.
+        if (next.isEmpty()) cupPositions = new float[0];
+        if (next.equals(cupOrder)) return;
+        cupOrder = next;
+        invalidate();
+    }
+
+    public String getCupOrder() {
+        return cupOrder;
+    }
+
+    /**
+     * Set each tracked cup's horizontal position, 0..1 across the analysed frame.
+     *
+     * Passed independently of {@link #setCupOrder} because the strip draws the cups
+     * where they are, not the letters in a fixed row. The two are fed from the same
+     * detection pass in the service, so they cannot describe different frames.
+     */
+    public void setCupPositions(float[] positions) {
+        cupPositions = positions == null ? new float[0] : positions.clone();
+        invalidate();
+    }
+
+    /** The positions last set, for tests. */
+    float[] getCupPositions() {
+        return cupPositions.clone();
+    }
+
     public int getToolbarState() {
         return state;
     }
@@ -196,14 +248,9 @@ public class OverlayToolbarView extends View {
                 buttons.add(new Button(ACTION_CLOSE, str(R.string.toolbar_close), false));
                 break;
             case STATE_TRACKING:
-                // Three controls while locked: retarget, the black-out toggle, and
-                // stop. "Change target" is required by the documented workflow, so
-                // the black-out toggle is added beside it rather than replacing it.
+                // Two controls while locked: retarget and stop. The black-out
+                // toggle was removed with the veil mode.
                 buttons.add(new Button(ACTION_CHANGE, str(R.string.toolbar_change), false));
-                buttons.add(new Button(
-                        focusMode ? ACTION_SHOW_ALL : ACTION_ISOLATE,
-                        str(focusMode ? R.string.toolbar_show_all : R.string.toolbar_isolate),
-                        false));
                 buttons.add(new Button(ACTION_STOP, str(R.string.toolbar_stop), true));
                 break;
             case STATE_LOST:
@@ -223,35 +270,17 @@ public class OverlayToolbarView extends View {
         return getResources().getString(resId);
     }
 
-    /**
-     * Called by the service so the controls can reflect tracker state.
-     *
-     * The button set also depends on whether the screen is currently blanked, so a
-     * change to either the state or the focus flag rebuilds it — the tracking state
-     * swaps "Isolate" for "Show all", and missing that left the bar offering the
-     * action that was already in effect.
-     */
+    /** Called by the service so the controls reflect tracker state. */
     public void syncState(boolean selecting, boolean locked, boolean lost) {
-        syncState(selecting, locked, lost, focusMode);
-    }
-
-    /** As {@link #syncState(boolean, boolean, boolean)}, with the black-out flag. */
-    public void syncState(boolean selecting, boolean locked, boolean lost, boolean focused) {
         int next = STATE_READY;
         if (selecting) next = STATE_SELECTING;
         else if (lost) next = STATE_LOST;
         else if (locked) next = STATE_TRACKING;
 
-        if (next != state || focused != focusMode) {
+        if (next != state) {
             state = next;
-            focusMode = focused;
             rebuildButtons();
         }
-    }
-
-    /** Whether the bar is currently offering "Show all" rather than "Isolate". */
-    public boolean isFocusMode() {
-        return focusMode;
     }
 
     @Override
@@ -293,6 +322,78 @@ public class OverlayToolbarView extends View {
         drawGrip(canvas, left, right, top);
         drawHeader(canvas, left, right);
         drawButtons(canvas, left, right);
+        drawCupStrip(canvas, left, right);
+    }
+
+    /**
+     * The letters strip: one letter per tracked cup, placed where that cup is.
+     *
+     * This is the readout that lets the user follow a shuffle without watching the
+     * cups themselves. It is driven purely by the cups' tracked positions — the
+     * order string only says which letter belongs to which cup — so it cannot agree
+     * with a stale label drawn over a cup, and it keeps reporting the cups' movement
+     * after the user has switched away from the tracked app and the cups are no
+     * longer visible at all.
+     */
+    private void drawCupStrip(Canvas canvas, float left, float right) {
+        // Shown whenever cups are tracked, not only once one is locked: the app
+        // letters the cups as soon as it finds them, and the strip is the only
+        // readout of that. Hidden only while the user is picking a target, when the
+        // card is telling them to tap instead.
+        if (state == STATE_SELECTING || cupPositions.length == 0) return;
+
+        String[] labels = cupOrder.isEmpty() ? new String[0] : cupOrder.split(" ");
+        if (labels.length == 0) return;
+
+        float trackLeft = left + dp(STRIP_MARGIN_DP);
+        float trackRight = right - dp(STRIP_MARGIN_DP);
+        float trackW = trackRight - trackLeft;
+        float midY = getPaddingTop() + dp(STRIP_TOP_DP + STRIP_HEIGHT_DP / 2f);
+        float pillH = dp(STRIP_HEIGHT_DP);
+
+        // A faint rail so the strip reads as a position line rather than stray
+        // letters: the cup's letter slides along it as the cup moves.
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(COLOR_PILL);
+        canvas.drawRoundRect(trackLeft, midY - dp(1.5f), trackRight, midY + dp(1.5f),
+                dp(1.5f), dp(1.5f), paint);
+
+        paint.setTypeface(boldFace);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(dp(11));
+
+        int n = Math.min(labels.length, cupPositions.length);
+        float pillW = Math.max(dp(20), Math.min(dp(34), trackW / Math.max(1, n) - dp(4)));
+
+        for (int i = 0; i < n; i++) {
+            float cx = chipCenterX(cupPositions[i], trackLeft, trackW, pillW);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(COLOR_CUP_CHIP);
+            canvas.drawRoundRect(cx - pillW / 2f, midY - pillH / 2f,
+                    cx + pillW / 2f, midY + pillH / 2f, pillH / 2f, pillH / 2f, paint);
+            paint.setColor(COLOR_TEXT);
+            canvas.drawText(labels[i], cx,
+                    midY - (paint.descent() + paint.ascent()) / 2f, paint);
+        }
+    }
+
+    /**
+     * Where a cup's letter chip is centred, from the cup's position along the frame.
+     *
+     * The chip is inset by half its own width so a cup at the left edge has its chip
+     * fully on the rail rather than half off the card, which is why the mapping is a
+     * lerp between half a chip and the rail's width less half a chip rather than a
+     * plain multiply. Extracted so the mapping is testable without a drawn bitmap:
+     * that the letters actually move with the cups is the whole point of the strip,
+     * and a render test on the JVM cannot see it (Robolectric's default graphics
+     * returns a blank bitmap).
+     */
+    static float chipCenterX(float t, float trackLeft, float trackW, float pillW) {
+        return trackLeft + pillW / 2f + (trackW - pillW) * clamp01(t);
+    }
+
+    private static float clamp01(float v) {
+        return v < 0f ? 0f : (v > 1f ? 1f : v);
     }
 
     /** A short bar at the top centre: the conventional "drag me" affordance. */
@@ -344,10 +445,17 @@ public class OverlayToolbarView extends View {
         canvas.drawLine(glyphCx, glyphCy - glyphR - dp(0.5f), glyphCx, glyphCy + glyphR + dp(0.5f), paint);
 
         // Status pill, right-aligned: dot plus label, with the live rate appended
-        // while tracking so the user can see capture is keeping up.
-        String meta = state == STATE_TRACKING && frameCount > 0
-                ? String.format(Locale.US, "%s · %.0f fps", statusText, fps)
-                : statusText;
+        // while tracking so the user can see capture is keeping up. The cup order
+        // replaces the rate when a shuffle is being tracked, because the letters are
+        // what the user is actually reading.
+        String meta;
+        if (state == STATE_TRACKING && cupOrder != null && !cupOrder.isEmpty()) {
+            meta = cupOrder;
+        } else if (state == STATE_TRACKING && frameCount > 0) {
+            meta = String.format(Locale.US, "%s · %.0f fps", statusText, fps);
+        } else {
+            meta = statusText;
+        }
 
         String wordmark = str(R.string.toolbar_wordmark);
         float wordmarkX = glyphCx + glyphR + dp(8);

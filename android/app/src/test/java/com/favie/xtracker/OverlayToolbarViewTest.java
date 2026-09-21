@@ -1,5 +1,6 @@
 package com.favie.xtracker;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -130,51 +131,128 @@ public class OverlayToolbarViewTest {
     }
 
     @Test
-    public void trackingStateOffersChangeIsolateAndStop() {
+    public void trackingStateOffersChangeAndStop() {
         Recorder recorder = new Recorder();
         OverlayToolbarView view = layout(recorder);
 
         view.syncState(false, true, false);
 
         OverlayToolbarView.Control[] controls = view.controlsForTest();
-        assertEquals(3, controls.length);
+        assertEquals(2, controls.length);
         assertEquals(OverlayToolbarView.ACTION_CHANGE, controls[0].action);
-        assertEquals(OverlayToolbarView.ACTION_ISOLATE, controls[1].action);
-        assertEquals(OverlayToolbarView.ACTION_STOP, controls[2].action);
+        assertEquals(OverlayToolbarView.ACTION_STOP, controls[1].action);
     }
 
     /**
-     * While the screen is blanked down to the target, the toggle has to offer the way
-     * back out. Leaving it reading "Isolate" would give the user a control that does
-     * nothing, and no way to restore the rest of the screen.
+     * The shuffle readout is what the user follows while the cups move, so the bar has
+     * to carry the current order and drop it when a new target is set.
      */
     @Test
-    public void trackingStateOffersShowAllWhenAlreadyIsolated() {
-        Recorder recorder = new Recorder();
-        OverlayToolbarView view = layout(recorder);
+    public void cupOrderIsCarriedAndCleared() {
+        OverlayToolbarView view = layout(new Recorder());
 
-        view.syncState(false, true, false, true);
+        view.setCupOrder("B A C");
+        assertEquals("B A C", view.getCupOrder());
 
-        OverlayToolbarView.Control[] controls = view.controlsForTest();
-        assertEquals(3, controls.length);
-        assertEquals(OverlayToolbarView.ACTION_SHOW_ALL, controls[1].action);
-        assertTrue("the bar must report the isolated state", view.isFocusMode());
+        view.setCupOrder("");
+        assertEquals("", view.getCupOrder());
     }
 
     /**
-     * The black-out toggle changes the button set without any change in tracker
-     * state, so the rebuild cannot key off the state alone.
+     * The letters strip has to show where the cups are, so it needs the positions
+     * as well as the order. Positions are dropped with the order: they describe the
+     * cups the order names, and a new session must not inherit the last one's.
      */
     @Test
-    public void togglingFocusRebuildsTheControlSet() {
-        Recorder recorder = new Recorder();
-        OverlayToolbarView view = layout(recorder);
+    public void cupPositionsAreCarriedAndDroppedWithTheOrder() {
+        OverlayToolbarView view = layout(new Recorder());
 
-        view.syncState(false, true, false, false);
-        assertEquals(OverlayToolbarView.ACTION_ISOLATE, view.controlsForTest()[1].action);
+        view.setCupOrder("B A C");
+        view.setCupPositions(new float[]{0.2f, 0.5f, 0.8f});
+        assertArrayEquals(new float[]{0.2f, 0.5f, 0.8f}, view.getCupPositions(), 1e-6f);
 
-        view.syncState(false, true, false, true);
-        assertEquals(OverlayToolbarView.ACTION_SHOW_ALL, view.controlsForTest()[1].action);
+        view.setCupOrder("");
+        assertEquals(0, view.getCupPositions().length);
+    }
+
+    /**
+     * The view keeps its own copy: the service reuses its readout array each frame,
+     * so holding the caller's array would let the next frame move positions the
+     * strip has not drawn yet.
+     */
+    @Test
+    public void cupPositionsAreCopiedNotAliased() {
+        OverlayToolbarView view = layout(new Recorder());
+
+        view.setCupOrder("A B C");
+        float[] source = {0.1f, 0.5f, 0.9f};
+        view.setCupPositions(source);
+        source[0] = 0.99f;
+
+        assertEquals(0.1f, view.getCupPositions()[0], 1e-6f);
+    }
+
+    /** A shorter order than positions must not draw a letter for an absent cup. */
+    @Test
+    public void theStripDrawsOneLetterPerNamedCup() {
+        OverlayToolbarView view = layout(new Recorder());
+        view.syncState(false, true, false);
+
+        view.setCupOrder("A B");
+        view.setCupPositions(new float[]{0f, 0.5f, 1f});
+
+        render(view);
+    }
+
+    /**
+     * The letters must move with the cups.
+     *
+     * The whole point of the strip is following a shuffle when the cups themselves
+     * are hard to watch, so it has to derive each chip's place from the cup's
+     * position. A strip that only echoed the order string would pass the rail and do
+     * nothing, which is the bug this pins: the chip at t=0.9 must sit to the right of
+     * the chip at t=0.1, by the rail's width less a chip.
+     */
+    @Test
+    public void theStripMovesWithTheCupPositions() {
+        float trackLeft = 12f, trackW = 220f, pillW = 28f;
+
+        float left = OverlayToolbarView.chipCenterX(0.1f, trackLeft, trackW, pillW);
+        float right = OverlayToolbarView.chipCenterX(0.9f, trackLeft, trackW, pillW);
+
+        assertTrue("a cup further right must draw its chip further right",
+                right > left);
+        assertEquals("the mapping must span the rail between half-chip insets",
+                (trackW - pillW) * 0.8f, right - left, 1e-3f);
+    }
+
+    /** A cup at either edge keeps its whole chip on the card. */
+    @Test
+    public void theStripKeepsEdgeChipsInsideTheRail() {
+        float trackLeft = 12f, trackW = 220f, pillW = 28f;
+
+        assertEquals(trackLeft + pillW / 2f,
+                OverlayToolbarView.chipCenterX(0f, trackLeft, trackW, pillW), 1e-3f);
+        assertEquals(trackLeft + trackW - pillW / 2f,
+                OverlayToolbarView.chipCenterX(1f, trackLeft, trackW, pillW), 1e-3f);
+        // A position outside the frame (a cup partly off-screen) is clamped, not drawn
+        // past the card.
+        assertEquals(trackLeft + trackW - pillW / 2f,
+                OverlayToolbarView.chipCenterX(1.7f, trackLeft, trackW, pillW), 1e-3f);
+        assertEquals(trackLeft + pillW / 2f,
+                OverlayToolbarView.chipCenterX(-0.4f, trackLeft, trackW, pillW), 1e-3f);
+    }
+
+    private static android.graphics.Bitmap render(OverlayToolbarView view) {
+        view.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        view.layout(0, 0, view.getMeasuredWidth(), view.getMeasuredHeight());
+        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                Math.max(1, view.getWidth()), Math.max(1, view.getHeight()),
+                android.graphics.Bitmap.Config.ARGB_8888);
+        view.draw(new android.graphics.Canvas(bmp));
+        return bmp;
     }
 
     @Test
@@ -364,7 +442,7 @@ public class OverlayToolbarViewTest {
         view.setStats(120, 24.5f);
         view.setStats(240, 23.0f);
 
-        assertEquals(OverlayToolbarView.ACTION_STOP, view.controlsForTest()[2].action);
+        assertEquals(OverlayToolbarView.ACTION_STOP, view.controlsForTest()[1].action);
         tapControl(view, OverlayToolbarView.ACTION_STOP);
         assertEquals(OverlayToolbarView.ACTION_STOP, recorder.actions.get(0));
     }

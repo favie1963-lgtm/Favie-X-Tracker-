@@ -177,10 +177,11 @@ public class ScreenCapturePlugin extends Plugin {
     }
 
     /**
-     * Blank the screen down to the tracked object, or show everything again.
+     * Retained so an older dashboard build cannot break against the new service.
      *
-     * Mirrors the toolbar's Isolate/Show all control so the dashboard can drive the
-     * same service state.
+     * The veil mode it used to drive was removed: blacking out the screen around
+     * the target prevented the user from watching the shuffle. The method now
+     * reports state without changing anything.
      */
     @PluginMethod
     public void setFocusMode(PluginCall call) {
@@ -189,7 +190,6 @@ public class ScreenCapturePlugin extends Plugin {
             call.reject("The tracking toolbar is not running");
             return;
         }
-        service.setFocusMode(call.getBoolean("enabled", true));
         call.resolve(overlayStatus());
     }
 
@@ -510,7 +510,7 @@ public class ScreenCapturePlugin extends Plugin {
         result.put("capture", service != null && service.isCaptureActive());
         result.put("mode", service != null ? service.getStateName() : "ready");
         result.put("selecting", service != null && service.isSelecting());
-        result.put("focus", service != null && service.isFocusMode());
+        result.put("cupOrder", service != null ? service.getCupOrder() : "");
         result.put("overlayPermission", hasOverlayPermission());
         JSObject target = service != null ? targetJson(service) : null;
         if (target != null) {
@@ -518,20 +518,23 @@ public class ScreenCapturePlugin extends Plugin {
         }
         result.put("frameCount", service != null ? service.getFrameCount() : 0);
         result.put("fps", service != null ? service.getFps() : 0);
+        if (service != null && service.getLastError() != null) {
+            result.put("error", service.getLastError());
+        }
         return result;
     }
 
     private JSObject targetJson(ScreenCaptureService service) {
-        NativeTargetTracker tracker = service.getTracker();
-        if (tracker.getBoxW() <= 0) return null;
+        ScreenCaptureService.TargetSnapshot snap = service.getTargetSnapshot();
+        if (snap == null) return null;
 
         JSObject target = new JSObject();
-        target.put("x", tracker.getBoxX());
-        target.put("y", tracker.getBoxY());
-        target.put("width", tracker.getBoxW());
-        target.put("height", tracker.getBoxH());
-        target.put("confidence", tracker.getConfidence());
-        target.put("state", tracker.getState() == NativeTargetTracker.STATE_LOST ? "lost" : "locked");
+        target.put("x", snap.x);
+        target.put("y", snap.y);
+        target.put("width", snap.w);
+        target.put("height", snap.h);
+        target.put("confidence", snap.confidence);
+        target.put("state", snap.lost ? "lost" : "locked");
         return target;
     }
 }

@@ -5,12 +5,14 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.ComponentCallbacks2;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
@@ -88,6 +90,20 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private final CaptureEngine engine = new CaptureEngine();
     private final NativeTargetTracker tracker = new NativeTargetTracker();
 
+    /** Detects the Thimbles cups and carries each one's letter through a shuffle. */
+    private final CupTracker cups = new CupTracker();
+
+    /**
+     * Guards {@link #tracker} and {@link #cups}.
+     *
+     * The analysis thread owns both while a session is live; a tap, a retarget or a
+     * reset arrives on the main thread and is re-posted onto {@link #analysisHandler}
+     * so that mutations are serialised on one thread. This lock covers the reads the
+     * overlays make from the main thread, which only need a coherent box rather than
+     * a strictly ordered one.
+     */
+    private final Object targetLock = new Object();
+
     private WindowManager windowManager;
     private OverlayToolbarView toolbarView;
     private TargetMarkerView markerView;
@@ -95,6 +111,24 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private WindowManager.LayoutParams markerParams;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    /**
+     * Dedicated thread for frame decoding and computer vision.
+     *
+     * The capture/analysis loop used to post to {@link #mainHandler}, which meant
+     * every frame's decode, colour scan and cup detection ran on the process's main
+     * thread every 250ms. Once the app was backgrounded the user could not see the
+     * jank, but the platform could: a main thread that is busy for hundreds of
+     * milliseconds at a time cannot service the process's own lifecycle callbacks,
+     * and that is a known path to an ANR or a low-memory reclaim of the app — which
+     * is what "the app closes when I open something else" looked like from outside.
+     *
+     * The analysis therefore lives on its own thread. Everything that touches a
+     * {@link android.view.View} is still marshalled back to the main thread, because
+     * views are not thread-safe; only the pixel work runs here.
+     */
+    private HandlerThread analysisThread;
+    private Handler analysisHandler;
 
     /**
      * Keeps the engine in step with the system.
@@ -152,11 +186,35 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private long lastFpsFrame = 0L;
     private float fps = 0f;
 
+    /**
+     * Time between capture ticks.
+     *
+     * A Thimbles shuffle moves a cup several hundred pixels between ticks, so 250ms
+     * was too coarse to follow one. The analysis now runs off the main thread, which
+     * is what makes a faster tick affordable: the interval is the only remaining
+     * cost knob, and the frame's freshness check means a static screen still costs
+     * nothing.
+     */
+    private static final long CAPTURE_INTERVAL_MS = 120L;
+
+    /** Last analysis failure, surfaced through the plugin for diagnostics. */
+    private volatile String lastError;
+
     private final Runnable captureLoop = new Runnable() {
         @Override
         public void run() {
-            tick();
-            if (active) mainHandler.postDelayed(this, 250);
+            try {
+                tick();
+            } catch (Throwable t) {
+                // A frame that fails to decode or analyse must not kill the loop:
+                // losing the whole session because one image was malformed is worse
+                // than skipping it. The next tick retries with fresh pixels.
+                lastError = t.getClass().getSimpleName() + ": " + t.getMessage();
+            }
+            Handler handler = analysisHandler;
+            if (active && handler != null) {
+                handler.postDelayed(this, CAPTURE_INTERVAL_MS);
+            }
         }
     };
 
@@ -211,9 +269,43 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         });
     }
 
-    /** The live tracker, for the plugin to attach taps and report state. */
-    public NativeTargetTracker getTracker() {
-        return tracker;
+    /**
+     * An immutable read of the tracker for the UI.
+     *
+     * The tracker itself is owned by the analysis thread while a session is live, so
+     * the plugin is handed a copy under the lock rather than a live reference it
+     * could read mid-update. A null snapshot means there is no sized box to report.
+     */
+    public static final class TargetSnapshot {
+        public final float x;
+        public final float y;
+        public final float w;
+        public final float h;
+        public final float confidence;
+        public final boolean lost;
+
+        TargetSnapshot(float x, float y, float w, float h, float confidence, boolean lost) {
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
+            this.confidence = confidence;
+            this.lost = lost;
+        }
+    }
+
+    /** A coherent copy of the current target, or null when nothing is locked. */
+    public TargetSnapshot getTargetSnapshot() {
+        synchronized (targetLock) {
+            if (tracker.getBoxW() <= 0) return null;
+            return new TargetSnapshot(
+                    tracker.getBoxX(),
+                    tracker.getBoxY(),
+                    tracker.getBoxW(),
+                    tracker.getBoxH(),
+                    tracker.getConfidence(),
+                    tracker.getState() == NativeTargetTracker.STATE_LOST);
+        }
     }
 
     @Override
@@ -298,7 +390,16 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         }
         broadcastState();
 
-        return START_NOT_STICKY;
+        // Sticky while a session is live: if the system reclaims the process under
+        // memory pressure — the usual fate of an app that keeps a projection alive
+        // while the user works in another app — the platform restarts the service
+        // and delivers a null intent, which the branch above uses to put the
+        // toolbar back. A projection cannot be restored without fresh consent, so
+        // this is not a silent restart of capture; it is what keeps the toolbar
+        // and the user's way back to their session from disappearing with the
+        // process. The explicit Stop paths return NOT_STICKY, so a session the user
+        // ended stays ended.
+        return START_STICKY;
     }
 
     /**
@@ -348,8 +449,11 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private void teardownProjection() {
         active = false;
         selecting = false;
-        mainHandler.removeCallbacks(captureLoop);
-        tracker.reset();
+        stopAnalysisThread();
+        synchronized (targetLock) {
+            tracker.reset();
+            cups.reset();
+        }
         if (markerView != null) {
             markerView.clearMarker();
             markerView.setMode(MODE_IDLE);
@@ -523,13 +627,47 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     }
 
     private void startLoop() {
-        mainHandler.removeCallbacks(captureLoop);
+        ensureAnalysisThread();
+        Handler handler = analysisHandler;
+        if (handler == null) return;
+        handler.removeCallbacks(captureLoop);
         lastFpsTime = System.currentTimeMillis();
         lastFpsFrame = frameCount;
-        mainHandler.post(captureLoop);
+        handler.post(captureLoop);
     }
 
-    /** One capture/analysis cycle. */
+    /**
+     * Start the analysis thread on first use.
+     *
+     * Created lazily rather than in {@code onCreate} so a service that only restores
+     * the toolbar — no projection attached, nothing to analyse — does not hold a
+     * thread for the whole time the toolbar is on screen.
+     */
+    private void ensureAnalysisThread() {
+        if (analysisThread != null) return;
+        analysisThread = new HandlerThread("xtracker-analysis");
+        analysisThread.start();
+        analysisHandler = new Handler(analysisThread.getLooper());
+    }
+
+    /**
+     * Stop the analysis thread and drop its queue.
+     *
+     * Called on every teardown path. Leaving a live HandlerThread behind after a
+     * session ends is how a "stopped" service keeps burning memory and CPU, and the
+     * thread would then also hold the last decoded pixel buffers alive.
+     */
+    private void stopAnalysisThread() {
+        Handler handler = analysisHandler;
+        if (handler != null) handler.removeCallbacksAndMessages(null);
+        analysisHandler = null;
+
+        HandlerThread thread = analysisThread;
+        analysisThread = null;
+        if (thread != null) thread.quit();
+    }
+
+    /** One capture/analysis cycle. Runs on {@link #analysisThread}, never main. */
     private void tick() {
         if (!active) return;
 
@@ -543,10 +681,13 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         // the same pixels over and over would burn CPU and could only ever confirm
         // a lock it already has.
         if (!frame.fresh) {
-            if (markerView != null) {
-                markerView.setGeometry(frame.width, frame.height,
-                        engine.getWidth(), engine.getHeight());
-            }
+            final int fw = frame.width;
+            final int fh = frame.height;
+            final int ew = engine.getWidth();
+            final int eh = engine.getHeight();
+            mainHandler.post(() -> {
+                if (markerView != null) markerView.setGeometry(fw, fh, ew, eh);
+            });
             return;
         }
 
@@ -558,40 +699,103 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
             lastFpsFrame = frameCount;
         }
 
-        if (tracker.isLocked() || tracker.getState() == NativeTargetTracker.STATE_LOST) {
-            tracker.update(frame.argb, frame.width, frame.height);
-        }
+        // The tracker and the cup identities are shared with the main thread,
+        // which reads them for the marker caption and mutates them on a user tap.
+        // Holding the lock across the update keeps a tap from landing in the
+        // middle of a detection pass and locking a half-written box.
+        CupTracker.TrackedCup lockedCup;
+        boolean lost;
+        boolean locked;
+        String caption;
+        String order;
+        float[] cupPositions = new float[0];
+        float boxX = 0f, boxY = 0f, boxW = 0f, boxH = 0f;
+        int boxColor = 0;
+        float confidence = 0f;
 
-        // The marker is positioned from analysis space; the view scales it to the
-        // screen, so a downscaled frame still lines up with the real object.
-        if (markerView != null) {
-            markerView.setGeometry(frame.width, frame.height, engine.getWidth(), engine.getHeight());
-            if (selecting) {
-                markerView.setMode(MODE_SELECT);
-            } else if (tracker.getState() == NativeTargetTracker.STATE_LOST) {
-                markerView.setMode(MODE_LOST);
-                markerView.setMarker(tracker.getBoxX(), tracker.getBoxY(),
-                        tracker.getBoxW(), tracker.getBoxH(),
-                        TargetMarkerView.describe(colorName(tracker.getColor()),
-                                tracker.getConfidence(), true));
-            } else if (tracker.isLocked()) {
-                markerView.setMode(MODE_TRACKING);
-                markerView.setMarker(tracker.getBoxX(), tracker.getBoxY(),
-                        tracker.getBoxW(), tracker.getBoxH(),
-                        TargetMarkerView.describe(colorName(tracker.getColor()),
-                                tracker.getConfidence(), false));
+        synchronized (targetLock) {
+            if (tracker.isLocked() || tracker.getState() == NativeTargetTracker.STATE_LOST) {
+                tracker.update(frame.argb, frame.width, frame.height);
+            }
+
+            // Detect the cups and carry their letters forward on every fresh frame,
+            // so the toolbar readout and the marker both come from one identity pass.
+            cups.update(frame.argb, frame.width, frame.height);
+
+            // A locked cup wins over appearance tracking: the marker is bound to
+            // that cup's identity, so it moves as the cup moves. This is the path
+            // that makes the marker follow through a shuffle of identical cups.
+            lockedCup = cups.getLockedCup();
+            CupTracker.ShuffleReadout readout = cups.readout(frame.width);
+            order = readout.order;
+            cupPositions = readout.positions;
+            lost = lockedCup == null && tracker.getState() == NativeTargetTracker.STATE_LOST;
+            locked = lockedCup != null || tracker.isLocked();
+
+            if (lockedCup != null) {
+                CupTracker.Cup c = lockedCup.cup;
+                boxX = c.x;
+                boxY = c.y;
+                boxW = c.w;
+                boxH = c.h;
+                caption = TargetMarkerView.describeCup(lockedCup.label, order);
+            } else if (tracker.isLocked() || lost) {
+                boxX = tracker.getBoxX();
+                boxY = tracker.getBoxY();
+                boxW = tracker.getBoxW();
+                boxH = tracker.getBoxH();
+                boxColor = tracker.getColor();
+                confidence = tracker.getConfidence();
+                caption = TargetMarkerView.describe(colorName(boxColor), confidence, lost);
             } else {
-                markerView.setMode(MODE_IDLE);
-                markerView.clearMarker();
+                caption = "";
             }
         }
 
-        if (toolbarView != null) {
-            toolbarView.setStats((int) frameCount, fps);
-            toolbarView.syncState(selecting, tracker.isLocked(),
-                    tracker.getState() == NativeTargetTracker.STATE_LOST,
-                    markerView != null && markerView.isFocusMode());
-        }
+        final CupTracker.TrackedCup cupForMarker = lockedCup;
+        final boolean lostForMarker = lost;
+        final String captionForMarker = caption;
+        final String orderForToolbar = order;
+        final float[] positionsForToolbar = cupPositions;
+        final float bx = boxX, by = boxY, bw = boxW, bh = boxH;
+        final int toolbarFrames = (int) frameCount;
+        final float toolbarFps = fps;
+        final boolean selectingNow = selecting;
+
+        // Views are not thread-safe, so every draw-state change is applied on the
+        // main thread. The pixel work above is what had to leave it.
+        mainHandler.post(() -> {
+            if (selectingNow) {
+                if (markerView != null) {
+                    markerView.setGeometry(frame.width, frame.height,
+                            engine.getWidth(), engine.getHeight());
+                    markerView.setMode(MODE_SELECT);
+                }
+            } else if (markerView != null) {
+                markerView.setGeometry(frame.width, frame.height,
+                        engine.getWidth(), engine.getHeight());
+                if (cupForMarker != null) {
+                    markerView.setMode(MODE_TRACKING);
+                    markerView.setMarker(bx, by, bw, bh, captionForMarker);
+                } else if (lostForMarker) {
+                    markerView.setMode(MODE_LOST);
+                    markerView.setMarker(bx, by, bw, bh, captionForMarker);
+                } else if (locked) {
+                    markerView.setMode(MODE_TRACKING);
+                    markerView.setMarker(bx, by, bw, bh, captionForMarker);
+                } else {
+                    markerView.setMode(MODE_IDLE);
+                    markerView.clearMarker();
+                }
+            }
+
+            if (toolbarView != null) {
+                toolbarView.setStats(toolbarFrames, toolbarFps);
+                toolbarView.setCupOrder(orderForToolbar);
+                toolbarView.setCupPositions(positionsForToolbar);
+                toolbarView.syncState(selectingNow, locked, lostForMarker);
+            }
+        });
     }
 
     /** Map an ARGB colour to the same names the web pipeline reports. */
@@ -717,12 +921,20 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
 
         if (selecting) {
             markerView.setMode(MODE_SELECT);
-        } else if (tracker.getState() == NativeTargetTracker.STATE_LOST) {
-            markerView.setMode(MODE_LOST);
-        } else if (tracker.isLocked()) {
-            markerView.setMode(MODE_TRACKING);
         } else {
-            markerView.setMode(MODE_IDLE);
+            boolean lost;
+            boolean locked;
+            synchronized (targetLock) {
+                lost = tracker.getState() == NativeTargetTracker.STATE_LOST;
+                locked = tracker.isLocked();
+            }
+            if (lost) {
+                markerView.setMode(MODE_LOST);
+            } else if (locked) {
+                markerView.setMode(MODE_TRACKING);
+            } else {
+                markerView.setMode(MODE_IDLE);
+            }
         }
 
         try {
@@ -753,6 +965,24 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
 
     // --- Toolbar actions ------------------------------------------------------
 
+    /**
+     * Run a tracker mutation on the analysis thread.
+     *
+     * The tracker and cup identities are owned by that thread while a session is
+     * live, so every touch from the main thread — a tap, a retarget, a reset — is
+     * re-posted there instead of mutating shared state from a second thread. When
+     * no analysis thread exists (the toolbar is up but no projection is attached)
+     * the work runs inline, which is safe because nothing else is touching them.
+     */
+    private void onTrackerThread(Runnable work) {
+        Handler handler = analysisHandler;
+        if (handler != null) {
+            handler.post(work);
+        } else {
+            work.run();
+        }
+    }
+
     @Override
     public void onAction(String action) {
         switch (action) {
@@ -767,16 +997,17 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
                 reacquire();
                 break;
             case OverlayToolbarView.ACTION_CLEAR:
-                tracker.reset();
-                if (markerView != null) markerView.clearMarker();
-                applyMarkerTouchability();
-                broadcastState();
-                break;
-            case OverlayToolbarView.ACTION_ISOLATE:
-                setFocusMode(true);
-                break;
-            case OverlayToolbarView.ACTION_SHOW_ALL:
-                setFocusMode(false);
+                onTrackerThread(() -> {
+                    synchronized (targetLock) {
+                        tracker.reset();
+                        cups.reset();
+                    }
+                    mainHandler.post(() -> {
+                        if (markerView != null) markerView.clearMarker();
+                        applyMarkerTouchability();
+                        broadcastState();
+                    });
+                });
                 break;
             case OverlayToolbarView.ACTION_STOP:
             case OverlayToolbarView.ACTION_CLOSE:
@@ -784,30 +1015,18 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
                 stopSelf();
                 break;
             default:
+                // Unknown or removed actions are ignored. The isolate/show-all
+                // controls were dropped with the veil mode; an older toolbar cannot
+                // leave the app in a hidden state because nothing handles them.
                 break;
         }
     }
 
-    /**
-     * Blank the screen down to the tracked object, or show everything again.
-     *
-     * The veil lives in the marker window, so this only has to set the flag and let
-     * the next tick repaint. It is offered as an explicit toggle rather than being
-     * forced on: a user who wants to watch the whole table can turn it off, and the
-     * marker and tracker behave identically either way.
-     */
-    public void setFocusMode(boolean enabled) {
-        mainHandler.post(() -> {
-            if (markerView == null) return;
-            // The veil is only meaningful once there is a target to reveal.
-            markerView.setFocusMode(enabled && tracker.isLocked());
-            broadcastState();
-        });
-    }
-
-    /** Whether the screen is currently blanked to the tracked object. */
-    public boolean isFocusMode() {
-        return markerView != null && markerView.isFocusMode();
+    /** Current left-to-right cup letters for the dashboard, e.g. {@code "B A C"}. */
+    public String getCupOrder() {
+        synchronized (targetLock) {
+            return cups.orderText();
+        }
     }
 
     @Override
@@ -854,7 +1073,11 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         engine.resetTapPeak();
         applyMarkerTouchability();
         if (toolbarView != null) {
-            toolbarView.syncState(true, tracker.isLocked(), false);
+            boolean locked;
+            synchronized (targetLock) {
+                locked = tracker.isLocked();
+            }
+            toolbarView.syncState(true, locked, false);
         }
         broadcastState();
     }
@@ -863,8 +1086,13 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         selecting = false;
         applyMarkerTouchability();
         if (toolbarView != null) {
-            toolbarView.syncState(false, tracker.isLocked(),
-                    tracker.getState() == NativeTargetTracker.STATE_LOST);
+            boolean lost;
+            boolean locked;
+            synchronized (targetLock) {
+                lost = tracker.getState() == NativeTargetTracker.STATE_LOST;
+                locked = tracker.isLocked();
+            }
+            toolbarView.syncState(false, locked, lost);
         }
         broadcastState();
     }
@@ -885,43 +1113,66 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private void handleTargetTap(float frameX, float frameY) {
         if (frameX < 0 || frameY < 0) return;
 
-        CaptureEngine.Frame frame = engine.frameForTap();
-        if (frame == null) {
-            // Nothing has been captured yet. Keep selection active for a retry.
-            broadcastState();
-            return;
-        }
+        onTrackerThread(() -> {
+            CaptureEngine.Frame frame = engine.frameForTap();
+            if (frame == null) {
+                // Nothing has been captured yet. Keep selection active for a retry.
+                mainHandler.post(this::broadcastState);
+                return;
+            }
 
-        boolean locked = tracker.select(frame.argb, frame.width, frame.height,
-                Math.round(frameX), Math.round(frameY));
-        if (!locked) {
-            tracker.reset();
-        } else if (markerView != null) {
-            // Focus follows a successful selection. The requested behaviour is that
-            // picking a target clears the rest of the screen and leaves only that
-            // object visible, and the user keeps the toolbar's "Show all" control to
-            // stop isolating — so the veil is armed here rather than waiting for a
-            // second tap.
-            markerView.setFocusMode(true);
-        }
+            // A tap is first offered to the cup tracker. When it lands on one of the
+            // three cups the marker is bound to that cup's identity, which is the
+            // only thing that can follow it through a shuffle of identical cups.
+            // Everything below is the fallback for a target that is not part of a
+            // Thimbles layout.
+            boolean locked;
+            synchronized (targetLock) {
+                String cupLabel = cups.lockAt(frameX, frameY);
+                if (cupLabel != null) {
+                    tracker.reset();
+                    locked = true;
+                } else {
+                    locked = tracker.select(frame.argb, frame.width, frame.height,
+                            Math.round(frameX), Math.round(frameY));
+                }
 
-        selecting = false;
-        applyMarkerTouchability();
-        broadcastState();
+                if (!locked) {
+                    tracker.reset();
+                    cups.clearLock();
+                }
+            }
+
+            selecting = false;
+            mainHandler.post(() -> {
+                applyMarkerTouchability();
+                broadcastState();
+            });
+        });
     }
 
     /** Reacquire explicitly at the last known position; never picks a new object. */
     private void reacquire() {
-        CaptureEngine.Frame frame = engine.frameForTap();
-        if (frame == null) return;
+        onTrackerThread(() -> {
+            CaptureEngine.Frame frame = engine.frameForTap();
+            if (frame == null) return;
 
-        float cx = tracker.getBoxX() + tracker.getBoxW() / 2f;
-        float cy = tracker.getBoxY() + tracker.getBoxH() / 2f;
-        boolean locked =
-                tracker.select(frame.argb, frame.width, frame.height, Math.round(cx), Math.round(cy));
-        if (locked && markerView != null) markerView.setFocusMode(true);
-        applyMarkerTouchability();
-        broadcastState();
+            synchronized (targetLock) {
+                // A locked cup is re-found by its own identity pass, so there is
+                // nothing to reacquire: it either survived the shuffle or it is
+                // genuinely gone.
+                if (!cups.hasLock()) {
+                    float cx = tracker.getBoxX() + tracker.getBoxW() / 2f;
+                    float cy = tracker.getBoxY() + tracker.getBoxH() / 2f;
+                    tracker.select(frame.argb, frame.width, frame.height,
+                            Math.round(cx), Math.round(cy));
+                }
+            }
+            mainHandler.post(() -> {
+                applyMarkerTouchability();
+                broadcastState();
+            });
+        });
     }
 
     /**
@@ -936,8 +1187,11 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private void stopCapture() {
         active = false;
         selecting = false;
-        mainHandler.removeCallbacks(captureLoop);
-        tracker.reset();
+        stopAnalysisThread();
+        synchronized (targetLock) {
+            tracker.reset();
+            cups.reset();
+        }
         engine.release();
         markSessionActive(false);
         removeOverlays();
@@ -947,22 +1201,26 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private void broadcastState() {
         Intent intent = new Intent(ACTION_STATE).setPackage(getPackageName());
         intent.putExtra(EXTRA_STATE, currentStateName());
-        if (tracker.getBoxW() > 0) {
-            intent.putExtra(EXTRA_TARGET_X, tracker.getBoxX());
-            intent.putExtra(EXTRA_TARGET_Y, tracker.getBoxY());
-            intent.putExtra(EXTRA_TARGET_W, tracker.getBoxW());
-            intent.putExtra(EXTRA_TARGET_H, tracker.getBoxH());
-            intent.putExtra(EXTRA_TARGET_LABEL,
-                    TargetMarkerView.describe(colorName(tracker.getColor()),
-                            tracker.getConfidence(), false));
+        synchronized (targetLock) {
+            if (tracker.getBoxW() > 0) {
+                intent.putExtra(EXTRA_TARGET_X, tracker.getBoxX());
+                intent.putExtra(EXTRA_TARGET_Y, tracker.getBoxY());
+                intent.putExtra(EXTRA_TARGET_W, tracker.getBoxW());
+                intent.putExtra(EXTRA_TARGET_H, tracker.getBoxH());
+                intent.putExtra(EXTRA_TARGET_LABEL,
+                        TargetMarkerView.describe(colorName(tracker.getColor()),
+                                tracker.getConfidence(), false));
+            }
         }
         sendBroadcast(intent);
     }
 
     private String currentStateName() {
         if (selecting) return STATE_SELECTING;
-        if (tracker.getState() == NativeTargetTracker.STATE_LOST) return STATE_LOST;
-        if (tracker.isLocked()) return STATE_TRACKING;
+        synchronized (targetLock) {
+            if (tracker.getState() == NativeTargetTracker.STATE_LOST) return STATE_LOST;
+            if (tracker.isLocked()) return STATE_TRACKING;
+        }
         return STATE_READY;
     }
 
@@ -1029,11 +1287,16 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
 
     /** Drop the target from the Activity's mirror UI. */
     public void clearTargetFromUi() {
-        mainHandler.post(() -> {
-            tracker.reset();
-            selecting = false;
-            applyMarkerTouchability();
-            broadcastState();
+        onTrackerThread(() -> {
+            synchronized (targetLock) {
+                tracker.reset();
+                cups.reset();
+            }
+            mainHandler.post(() -> {
+                selecting = false;
+                applyMarkerTouchability();
+                broadcastState();
+            });
         });
     }
 
@@ -1045,13 +1308,44 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         });
     }
 
+    /** Last analysis failure, or null. Surfaced to the plugin for diagnostics. */
+    public String getLastError() {
+        return lastError;
+    }
+
+    /**
+     * Trim memory when the platform asks.
+     *
+     * A screen-capture service walks a narrow line: it holds a full-resolution
+     * bitmap plus an ARGB buffer for the current frame, and the system is most
+     * likely to reclaim the process exactly when the user has opened another,
+     * memory-hungry app. Dropping the cached decode and the scratch buffers on a
+     * trim keeps the process's footprint down without losing the session; the next
+     * tick rebuilds them from the live projection. The last known frame is
+     * deliberately kept so a tap immediately after a trim still resolves.
+     */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            engine.releaseScratchForTrim();
+        }
+    }
+
+    /** Legacy low-memory callback for pre-API-14 devices; same treatment. */
+    @Override
+    public void onLowMemory() {
+        super.onLowMemory();
+        engine.releaseScratchForTrim();
+    }
+
     @Override
     public void onDestroy() {
         active = false;
         running = false;
         inForeground = false;
         instance = null;
-        mainHandler.removeCallbacks(captureLoop);
+        stopAnalysisThread();
         removeOverlays();
         engine.release();
         super.onDestroy();
