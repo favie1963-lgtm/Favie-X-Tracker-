@@ -50,6 +50,9 @@ public class OverlayToolbarView extends View {
     public static final String ACTION_REACQUIRE = "reacquire";
     public static final String ACTION_CLEAR = "clear";
     public static final String ACTION_CLOSE = "close";
+    /** Toggle the black-out that leaves only the tracked object visible. */
+    public static final String ACTION_SHOW_ALL = "show-all";
+    public static final String ACTION_ISOLATE = "isolate";
 
     private static final int STATE_READY = 0;
     private static final int STATE_SELECTING = 1;
@@ -66,16 +69,21 @@ public class OverlayToolbarView extends View {
     private static final int COLOR_PILL = 0x1FFFFFFF;
 
     private static final int COLOR_TEXT = 0xFFFFFFFF;
-    private static final int COLOR_INK_INVERSE = 0xFF0C0C0E;
+    private static final int COLOR_INK_INVERSE = 0xFFFFFFFF;
 
     private static final int COLOR_BUTTON = 0x1FFFFFFF;
     private static final int COLOR_BUTTON_PRESSED = 0x3DFFFFFF;
-    private static final int COLOR_ACCENT_PRESSED = 0xFFD6D6D6;
+    /** Pressed shade of the red primary; the resting shade is COLOR_ACCENT. */
+    private static final int COLOR_ACCENT_PRESSED = 0xFFFF5566;
+    /** Brand red: every primary action on the bar and the live state accent. */
+    private static final int COLOR_ACCENT = 0xFFFF2D3F;
 
     // State accents, shared with TargetMarkerView so the pill and the marker agree.
-    private static final int COLOR_READY = 0xFF4ADE80;
-    private static final int COLOR_SELECTING = 0xFFFBBF24;
-    private static final int COLOR_LOST = 0xFFF87171;
+    // The ladder is red-family for the two live states and grey for ready, matching
+    // the app UI: green would be a second accent the black-and-red scheme has not got.
+    private static final int COLOR_READY = 0xFF8A8A8A;
+    private static final int COLOR_SELECTING = 0xFFFF2D3F;
+    private static final int COLOR_LOST = 0xFFFF6B6B;
 
     private static final float CARD_WIDTH_DP = 244f;
     private static final float CARD_HEIGHT_DP = 104f;
@@ -109,6 +117,8 @@ public class OverlayToolbarView extends View {
     private final RectF pillRect = new RectF();
 
     private int state = STATE_READY;
+    /** Whether the screen is blanked to leave only the tracked object visible. */
+    private boolean focusMode = false;
     private int frameCount = 0;
     private float fps = 0f;
 
@@ -186,7 +196,14 @@ public class OverlayToolbarView extends View {
                 buttons.add(new Button(ACTION_CLOSE, str(R.string.toolbar_close), false));
                 break;
             case STATE_TRACKING:
+                // Three controls while locked: retarget, the black-out toggle, and
+                // stop. "Change target" is required by the documented workflow, so
+                // the black-out toggle is added beside it rather than replacing it.
                 buttons.add(new Button(ACTION_CHANGE, str(R.string.toolbar_change), false));
+                buttons.add(new Button(
+                        focusMode ? ACTION_SHOW_ALL : ACTION_ISOLATE,
+                        str(focusMode ? R.string.toolbar_show_all : R.string.toolbar_isolate),
+                        false));
                 buttons.add(new Button(ACTION_STOP, str(R.string.toolbar_stop), true));
                 break;
             case STATE_LOST:
@@ -206,17 +223,35 @@ public class OverlayToolbarView extends View {
         return getResources().getString(resId);
     }
 
-    /** Called by the service so the controls can reflect tracker state. */
+    /**
+     * Called by the service so the controls can reflect tracker state.
+     *
+     * The button set also depends on whether the screen is currently blanked, so a
+     * change to either the state or the focus flag rebuilds it — the tracking state
+     * swaps "Isolate" for "Show all", and missing that left the bar offering the
+     * action that was already in effect.
+     */
     public void syncState(boolean selecting, boolean locked, boolean lost) {
+        syncState(selecting, locked, lost, focusMode);
+    }
+
+    /** As {@link #syncState(boolean, boolean, boolean)}, with the black-out flag. */
+    public void syncState(boolean selecting, boolean locked, boolean lost, boolean focused) {
         int next = STATE_READY;
         if (selecting) next = STATE_SELECTING;
         else if (lost) next = STATE_LOST;
         else if (locked) next = STATE_TRACKING;
 
-        if (next != state) {
+        if (next != state || focused != focusMode) {
             state = next;
+            focusMode = focused;
             rebuildButtons();
         }
+    }
+
+    /** Whether the bar is currently offering "Show all" rather than "Isolate". */
+    public boolean isFocusMode() {
+        return focusMode;
     }
 
     @Override
@@ -397,7 +432,7 @@ public class OverlayToolbarView extends View {
             boolean pressed = i == pressedIndex;
             paint.setStyle(Paint.Style.FILL);
             if (button.accent) {
-                paint.setColor(pressed ? COLOR_ACCENT_PRESSED : Color.WHITE);
+                paint.setColor(pressed ? COLOR_ACCENT_PRESSED : COLOR_ACCENT);
             } else {
                 paint.setColor(pressed ? COLOR_BUTTON_PRESSED : COLOR_BUTTON);
             }

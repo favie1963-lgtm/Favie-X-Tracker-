@@ -109,12 +109,22 @@ the same `layoutButtons` the draw pass uses.
 
 ## Branding
 
+The brand is black and red. The mark is a faceless mask: a dark rounded square
+with two glowing red eyes, a white grin and a dark tear under each eye. There is
+no nose and no outline — the eyes and the grin are the whole face, which is what
+keeps it legible at 20px. `src/index.css` holds the tokens (`--red`, `--red-dim`,
+`--red-surface`, `--red-border`), and `--ink` is aliased to the red so buttons,
+the live status dot, the active tab and the target marker all land on one hue.
+Green is deliberately absent: a second accent made the scheme read as generic.
+
 `scripts/generate_brand_assets.py` is the single source of truth for the
 launcher icon PNGs; `scripts/gen_splash_vector.py` emits `splash_icon.xml` for
-the Android 12+ splash slot. Both write into `android/app/src/main/res/`, so
-regenerate and commit rather than editing the PNGs by hand.
-`src/components/BrandMark.jsx` mirrors the same geometry for the in-app header,
-so a change to the mark means changing it in both places.
+the Android 12+ splash slot and `splash_mark.xml` for the pre-12 launch
+background. Both write into `android/app/src/main/res/`, so regenerate and
+commit rather than editing the PNGs by hand. `src/components/BrandMark.jsx`
+mirrors the same geometry and colours for the in-app header, so a change to the
+mark means changing all three places. The generator writes all 15 PNGs in one
+pass; the splash vectors are stdout, redirected into the drawable.
 
 The splash is a vector, not a bitmap. `drawable/splash_screen.xml` is a
 layer-list that puts the mark on the splash background for pre-Android-12
@@ -123,25 +133,35 @@ draws `splash_icon.xml` instead. There is deliberately no `splash.png` — one
 raster per density produced five byte-identical files that tripped
 `IconDipSize`/`IconDuplicatesConfig` and added ~120KB to the APK.
 
-Four things that are easy to get wrong here:
+Things that are easy to get wrong here:
 
 - `ic_launcher_background` must stay black. It was white, and because the
-  adaptive foreground is white ink the icon rendered invisible.
+  adaptive foreground is then composited over it the icon rendered poorly.
 - The adaptive foreground is scaled to fit the 72dp safe zone's inscribed
   circle. Scaling it up to match the legacy icons makes round launcher masks
   clip the mark's corners.
+- The adaptive foreground's face plate must be an *opaque* colour. It is a
+  separate layer composited over the background, so a translucent plate lets the
+  background through the whole shape and the eyes and grin end up floating on
+  nothing.
 - The legacy `ic_launcher.png` carries its own inset plate rather than filling
   the tile. Legacy icons are shown unmasked, and one that fills every pixel
   reads as a blocky square next to the adaptive icons on the same launcher.
-- The rasteriser that generates the PNGs ignores SVG `mask` elements. The
-  reticle hole in the X is an evenodd `clipPath`, which is also why the in-app
-  `BrandMark` uses a clip path and not a coloured disc.
+- Stroking the grin with a quadratic gives it round caps on most renderers and
+  it reads as a pipe. Both the SVG and the VectorDrawable fill the region
+  between two quads instead, so the mouths match and the ends are square.
 - The banner comment `gen_splash_vector.py` emits must not contain `--`. XML
   forbids a double hyphen inside a comment, and aapt2 rejects the whole drawable
   at `parseDebugLocalResources` with an unhelpful "Failed to parse XML file"
   naming no line. The mark-mode banner used to read
   `gen_splash_vector.py --mark`, which broke the build; it now names the mode in
   parentheses instead.
+- `ic_stat_capture.xml` cannot show the red eyes. A notification small icon is
+  an alpha mask the system tints to one colour, so the eyes are knocked *out* of
+  the silhouette rather than coloured, and the shape carries the mark.
+- The launcher PNGs and the splash vectors must be regenerated together. They
+  share the mark constants but not the code, and only the generators' output is
+  committed — nothing catches drift beyond eyeballing the icon.
 
 ## Setting up a build environment
 

@@ -31,6 +31,7 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:excludeFromRecents="false"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
 
@@ -51,6 +52,13 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
+        <!--
+            The capture owner. stopWithTask="false" is deliberate: the service keeps
+            running after the user swipes the app out of recents, and it decides for
+            itself in onTaskRemoved whether a session was actually active. Letting
+            the platform stop it with the task would kill capture exactly when the
+            user switched away, which is the bug this architecture exists to avoid.
+        -->
         <service
             android:name=".ScreenCaptureService"
             android:exported="false"

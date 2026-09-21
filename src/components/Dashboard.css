@@ -34,8 +34,8 @@
 /* ---------- Hero ---------- */
 
 .hero {
-  background: linear-gradient(155deg, #1b1b1b 0%, #121212 100%);
-  border-color: var(--border-strong);
+  background: linear-gradient(155deg, #201213 0%, #121212 100%);
+  border-color: var(--red-border);
 }
 
 .hero-top {
@@ -254,12 +254,17 @@
   flex: none;
 }
 
+/* Status tones. Tracking states are all red-family so the ladder reads as one
+   brand: live is full red, a degraded state is a dimmer red, and idle is grey.
+   Green would have introduced a second accent the black-and-red scheme does not
+   have. */
 .tone-ok {
-  color: #d8f5e3;
+  color: var(--red-bright);
 }
 
 .tone-ok .status-dot {
-  background: #4ade80;
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(255, 45, 63, 0.16);
 }
 
 .tone-warn {

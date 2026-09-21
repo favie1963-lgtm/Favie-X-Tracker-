@@ -1,4 +1,4 @@
-/* Brand intro. Pure black ground, white mark, no colour anywhere. */
+/* Brand intro. Pure black ground, red mark, no other colour anywhere. */
 
 .launch-overlay {
   position: fixed;
@@ -19,7 +19,7 @@
 }
 
 .launch-mark {
-  color: #fff;
+  color: var(--red);
   /* Settle from slightly overscaled. One small move reads as polish; a bounce
      reads as a toy, which is why the mark no longer overshoots. */
   animation: launch-zoom 1100ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -40,7 +40,7 @@
 .launch-rule {
   width: 64px;
   height: 1.5px;
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 45, 63, 0.4);
   animation: launch-name 1100ms ease forwards;
 }
 

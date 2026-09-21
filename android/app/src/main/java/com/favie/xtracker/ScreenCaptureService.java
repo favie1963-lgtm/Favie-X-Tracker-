@@ -73,6 +73,10 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private static final String CHANNEL_ID = "favie-screen-capture";
     private static final int NOTIFICATION_ID = 4201;
 
+    /** Preference file recording whether a capture session is meant to be running. */
+    private static final String PREFS = "favie.capture";
+    private static final String PREF_SESSION_ACTIVE = "session_active";
+
     private static final int MODE_IDLE = 0;
     private static final int MODE_SELECT = 1;
     private static final int MODE_TRACKING = 2;
@@ -98,28 +102,46 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
      * {@code onStop} fires when the user revokes capture or the system reclaims the
      * token, so the engine is released rather than left pointing at a dead
      * projection. {@code onCapturedContentResize} (API 34+) reports a new size when
-     * the captured content changes, and the buffers only match it once the virtual
-     * display is rebuilt.
+     * the captured content changes, and the buffers only match it once they follow
+     * that size.
+     *
+     * Nothing here stops the service. The projection ending is not the same event as
+     * the user asking for the session to end: the platform can reclaim a token and
+     * then deliver a fresh one, and stopping on the callback would also tear the
+     * notification and the toolbar down. Only an explicit user action stops the
+     * service.
      */
     private final android.media.projection.MediaProjection.Callback projectionCallback =
             new android.media.projection.MediaProjection.Callback() {
                 @Override
                 public void onStop() {
                     mainHandler.post(() -> {
-                        stopCapture();
-                        stopSelf();
+                        teardownProjection();
+                        markSessionActive(false);
+                        broadcastState();
                     });
                 }
 
                 @Override
                 public void onCapturedContentResize(int width, int height) {
                     if (width <= 0 || height <= 0) return;
-                    engine.resize(width, height);
+                    mainHandler.post(() -> {
+                        try {
+                            engine.resize(width, height);
+                        } catch (Exception ignored) {
+                            // A resize that the platform refuses leaves the previous
+                            // geometry in place; the next frame is then simply the
+                            // old size rather than a crash.
+                        }
+                    });
                 }
             };
 
     private volatile boolean active = false;
     private volatile boolean selecting = false;
+
+    /** Whether the service has reached {@code startForeground} in this process. */
+    private volatile boolean inForeground = false;
 
     /** Frame transport settings, mirrored from the WebView config. */
     private volatile int maxFrameWidth = 960;
@@ -148,10 +170,6 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         return instance;
     }
 
-    public boolean isCaptureActive() {
-        return active && engine.isRunning();
-    }
-
     public boolean isToolbarShowing() {
         return toolbarView != null;
     }
@@ -176,6 +194,20 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
                 toolbarParams = null;
             }
             broadcastState();
+        });
+    }
+
+    /**
+     * Make sure both overlay windows are attached, without touching the session.
+     *
+     * Called when the Activity resumes and after the task is removed, because the
+     * platform can take overlay windows down with the task even though the service
+     * keeps running. Idempotent: an existing window is left alone.
+     */
+    public void ensureOverlaysRestored() {
+        mainHandler.post(() -> {
+            if (!hasOverlayPermission()) return;
+            showOverlays();
         });
     }
 
@@ -224,31 +256,38 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         // A null intent means the system re-created the service on its own, not
         // that the user (or the plugin) asked for capture. A MediaProjection
         // cannot be restored — the platform requires fresh consent for every
-        // session — so there would be nothing to capture. Rather than linger as a
-        // foreground service posting an indefinite notification for a session that
-        // cannot work, shut down and let the user start again from the app.
-        if (intent == null) {
-            // Enter the foreground first purely to satisfy the platform's
-            // foreground-service contract, then leave: a service started via
-            // startForegroundService that stops without ever calling
-            // startForeground is killed with ForegroundServiceDidNotStartInTime.
-            enterForeground();
-            stopCapture();
-            stopSelf();
-            return START_NOT_STICKY;
-        }
-
-        if (intent.getBooleanExtra(EXTRA_STOP, false)) {
-            enterForeground();
-            stopCapture();
-            stopSelf();
-            return START_NOT_STICKY;
-        }
-
-        // Reaching the foreground is what lets the projection exist, so the
-        // notification is posted before anything else can fail. This is the only
-        // path that announces readiness: a projection can be attached from here on.
+        // session — so there would be nothing to capture. The overlays are still
+        // restored when the user left a session enabled, because the toolbar is the
+        // only way back to the two controls that need an Activity: retargeting via
+        // consent and stopping. Reaching the foreground first also satisfies the
+        // platform's foreground-service contract.
         enterForeground();
+
+        if (intent == null) {
+            if (isSessionActive()) {
+                restoreOverlaysAfterRecreate();
+                broadcastState();
+                // Stay alive so the restored toolbar can be used. A projection can
+                // be attached to this same instance, because the plugin sees the
+                // live service and hands the new consent straight over.
+                return START_NOT_STICKY;
+            }
+            stopCapture();
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        // An explicit user request to stop. This is the only path that ends a
+        // session; a minimised Activity never reaches it.
+        if (intent.getBooleanExtra(EXTRA_STOP, false)) {
+            stopCapture();
+            markSessionActive(false);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        // This is the only path that announces readiness: a projection can be
+        // attached from here on.
         sendBroadcast(new Intent(ACTION_READY).setPackage(getPackageName()));
 
         // If a projection is already attached (the user re-opened the app, or the
@@ -260,6 +299,118 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         broadcastState();
 
         return START_NOT_STICKY;
+    }
+
+    /**
+     * Record that the user wants a capture session to be running.
+     *
+     * Written on start and cleared on stop. Android will not let the app restart a
+     * projection without fresh consent, but it does let the process be recreated
+     * after the user swipes the app away, and this flag is what distinguishes "the
+     * user wants the toolbar" from "a stray service start".
+     */
+    private void markSessionActive(boolean value) {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_SESSION_ACTIVE, value)
+                .apply();
+    }
+
+    private boolean isSessionActive() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_SESSION_ACTIVE, false);
+    }
+
+    /**
+     * Put the overlays back after the process was recreated.
+     *
+     * There is no projection yet, so capture is not running and the toolbar shows
+     * its ready state. It is still the toolbar the user asked to keep, and the
+     * Select target button is what leads back to a consent prompt.
+     */
+    private void restoreOverlaysAfterRecreate() {
+        if (!hasOverlayPermission()) return;
+        showOverlays();
+        if (toolbarView != null) {
+            toolbarView.syncState(false, false, false);
+        }
+        applyMarkerTouchability();
+    }
+
+    /**
+     * Release capture after the system took the projection away.
+     *
+     * Deliberately does not stop the service or remove the overlays: the user may
+     * simply retarget, which asks for a fresh consent, and the toolbar has to still
+     * be there for that. The marker is dropped because the box it described was
+     * measured against a projection that no longer exists.
+     */
+    private void teardownProjection() {
+        active = false;
+        selecting = false;
+        mainHandler.removeCallbacks(captureLoop);
+        tracker.reset();
+        if (markerView != null) {
+            markerView.clearMarker();
+            markerView.setMode(MODE_IDLE);
+        }
+        if (toolbarView != null) {
+            toolbarView.syncState(false, false, false);
+        }
+        // Release the engine outright rather than only the display: the projection
+        // is already invalid once onStop has been delivered, and dropping the
+        // reader, the pixel buffers and the decode thread is what frees the memory
+        // the dead session was holding. A later consent builds a fresh engine state.
+        engine.release();
+        applyMarkerTouchability();
+    }
+
+    /** Whether the service has reached the foreground in this process. */
+    public boolean isInForeground() {
+        return inForeground;
+    }
+
+    /**
+     * The system's time limit for a foreground service was reached.
+     *
+     * {@code mediaProjection} is not one of the time-limited types, so this should
+     * not fire; if it ever does, stopping immediately is required or the platform
+     * raises {@code RemoteServiceException} and kills the app.
+     */
+    @Override
+    public void onTimeout(int startId) {
+        stopCapture();
+        markSessionActive(false);
+        stopSelf();
+    }
+
+    /**
+     * The user swiped the app out of the recents list.
+     *
+     * {@code stopWithTask="false"} keeps the service alive so capture survives the
+     * swipe, and the overlays are moved back on screen because the platform can
+     * take them down with the task. The service is only stopped when the session was
+     * not actually recording anything, so a swipe cannot silently kill a live
+     * session.
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        if (!isSessionActive()) {
+            stopCapture();
+            stopSelf();
+            return;
+        }
+        mainHandler.post(() -> {
+            if (isCaptureActive()) {
+                showOverlays();
+                broadcastState();
+            } else {
+                // Nothing to capture (the projection was never attached, or has
+                // ended). Leave the user in the state where retargeting works.
+                restoreOverlaysAfterRecreate();
+            }
+        });
     }
 
     /**
@@ -282,6 +433,16 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
                 open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
+        // The notification stays posted for as long as the session can capture,
+        // which is what makes the capture visible to the user — the platform
+        // requires it, and the user can end the session from the notification.
+        Intent stop = new Intent(this, ScreenCaptureService.class).putExtra(EXTRA_STOP, true);
+        PendingIntent stopIntent = PendingIntent.getService(
+                this,
+                1,
+                stop,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(getString(R.string.app_name))
                 .setContentText(getString(R.string.capture_notification_text))
@@ -290,6 +451,7 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
                 .setShowWhen(false)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setContentIntent(contentIntent)
+                .addAction(0, getString(R.string.capture_notification_stop), stopIntent)
                 .build();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -300,6 +462,7 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         }
 
         running = true;
+        inForeground = true;
     }
 
     /**
@@ -308,19 +471,51 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
      * Must be called on the main thread. The engine is created here rather than in
      * the Activity so the projection's lifetime is the service's, not the
      * Activity's.
+     *
+     * Throws if the projection cannot be registered or the display cannot be
+     * created, so the plugin can report a failure instead of leaving a session that
+     * looks alive and captures nothing.
      */
     public void attachProjection(android.media.projection.MediaProjection projection,
                                  int width, int height, int densityDpi) {
+        boolean callbackRegistered = false;
         try {
             projection.registerCallback(projectionCallback, mainHandler);
+            callbackRegistered = true;
         } catch (Exception ignored) {
-            // Some platforms reject a second callback; capture still works.
+            // Some platforms reject a second callback; capture still works, but
+            // Android 14+ requires one to exist before a display may be created.
         }
-        engine.start(projection, width, height, densityDpi);
+
+        try {
+            engine.start(projection, width, height, densityDpi);
+        } catch (RuntimeException e) {
+            if (callbackRegistered) {
+                try {
+                    projection.unregisterCallback(projectionCallback);
+                } catch (Exception ignored) {
+                    // Best effort.
+                }
+            }
+            throw e;
+        }
+
         active = true;
+        markSessionActive(true);
         showOverlays();
         startLoop();
         broadcastState();
+    }
+
+    /**
+     * Whether the projection is live.
+     *
+     * The engine is the authority rather than the {@code active} flag, because a
+     * projection the system ended leaves {@code active} set until the callback is
+     * delivered.
+     */
+    public boolean isCaptureActive() {
+        return active && engine.isRunning();
     }
 
     public boolean isSelecting() {
@@ -394,7 +589,8 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         if (toolbarView != null) {
             toolbarView.setStats((int) frameCount, fps);
             toolbarView.syncState(selecting, tracker.isLocked(),
-                    tracker.getState() == NativeTargetTracker.STATE_LOST);
+                    tracker.getState() == NativeTargetTracker.STATE_LOST,
+                    markerView != null && markerView.isFocusMode());
         }
     }
 
@@ -418,10 +614,19 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         return Settings.canDrawOverlays(this);
     }
 
+    /**
+     * Add the marker window first, then the toolbar.
+     *
+     * Window order is creation order: later windows sit on top. The marker is
+     * full-screen with {@code FLAG_LAYOUT_IN_SCREEN}, so if it were added after the
+     * toolbar it would cover the toolbar's buttons and leave the bar visible but
+     * untappable the moment the user selected a target. Adding the marker first
+     * keeps the toolbar above it and reachable.
+     */
     private void showOverlays() {
         if (!hasOverlayPermission()) return;
-        if (toolbarView == null) addToolbarWindow();
         if (markerView == null) addMarkerWindow();
+        if (toolbarView == null) addToolbarWindow();
         applyMarkerTouchability();
     }
 
@@ -567,6 +772,12 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
                 applyMarkerTouchability();
                 broadcastState();
                 break;
+            case OverlayToolbarView.ACTION_ISOLATE:
+                setFocusMode(true);
+                break;
+            case OverlayToolbarView.ACTION_SHOW_ALL:
+                setFocusMode(false);
+                break;
             case OverlayToolbarView.ACTION_STOP:
             case OverlayToolbarView.ACTION_CLOSE:
                 stopCapture();
@@ -575,6 +786,28 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
             default:
                 break;
         }
+    }
+
+    /**
+     * Blank the screen down to the tracked object, or show everything again.
+     *
+     * The veil lives in the marker window, so this only has to set the flag and let
+     * the next tick repaint. It is offered as an explicit toggle rather than being
+     * forced on: a user who wants to watch the whole table can turn it off, and the
+     * marker and tracker behave identically either way.
+     */
+    public void setFocusMode(boolean enabled) {
+        mainHandler.post(() -> {
+            if (markerView == null) return;
+            // The veil is only meaningful once there is a target to reveal.
+            markerView.setFocusMode(enabled && tracker.isLocked());
+            broadcastState();
+        });
+    }
+
+    /** Whether the screen is currently blanked to the tracked object. */
+    public boolean isFocusMode() {
+        return markerView != null && markerView.isFocusMode();
     }
 
     @Override
@@ -659,9 +892,17 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
             return;
         }
 
-        if (!tracker.select(frame.argb, frame.width, frame.height,
-                Math.round(frameX), Math.round(frameY))) {
+        boolean locked = tracker.select(frame.argb, frame.width, frame.height,
+                Math.round(frameX), Math.round(frameY));
+        if (!locked) {
             tracker.reset();
+        } else if (markerView != null) {
+            // Focus follows a successful selection. The requested behaviour is that
+            // picking a target clears the rest of the screen and leaves only that
+            // object visible, and the user keeps the toolbar's "Show all" control to
+            // stop isolating — so the veil is armed here rather than waiting for a
+            // second tap.
+            markerView.setFocusMode(true);
         }
 
         selecting = false;
@@ -676,18 +917,29 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
 
         float cx = tracker.getBoxX() + tracker.getBoxW() / 2f;
         float cy = tracker.getBoxY() + tracker.getBoxH() / 2f;
-        tracker.select(frame.argb, frame.width, frame.height, Math.round(cx), Math.round(cy));
+        boolean locked =
+                tracker.select(frame.argb, frame.width, frame.height, Math.round(cx), Math.round(cy));
+        if (locked && markerView != null) markerView.setFocusMode(true);
         applyMarkerTouchability();
         broadcastState();
     }
 
-    /** Stop capture and hide the overlays, then take the service down. */
+    /**
+     * Stop capture and hide the overlays, then take the service down.
+     *
+     * Reached only from an explicit user action: the toolbar's Stop/Close control,
+     * the notification's Stop action, the dashboard's switch, or the service's own
+     * timeout. Merely minimising the Activity, rotating the device or opening
+     * another application never reaches this, which is what keeps tracking alive in
+     * the background.
+     */
     private void stopCapture() {
         active = false;
         selecting = false;
         mainHandler.removeCallbacks(captureLoop);
         tracker.reset();
         engine.release();
+        markSessionActive(false);
         removeOverlays();
         broadcastState();
     }
@@ -733,6 +985,18 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     /** One frame for the WebView dashboard's live preview. */
     public CaptureEngine.Frame captureFrameForBridge(int maxWidth, int quality) {
         return engine.captureFrame(maxWidth, quality, true);
+    }
+
+    /**
+     * Latest frame as a JPEG data URL for a preview consumer, or null.
+     *
+     * Serves the retained picture when the display has produced nothing new, so a
+     * static screen still gives the dashboard a preview. The base64 string is
+     * produced for this call only and is not retained by the service.
+     */
+    public String capturePreviewForBridge(int maxWidth, int quality) {
+        CaptureEngine.Frame frame = engine.captureFrame(maxWidth, quality, true);
+        return frame == null ? null : frame.dataUrl;
     }
 
     public long getFrameCount() {
@@ -785,6 +1049,7 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     public void onDestroy() {
         active = false;
         running = false;
+        inForeground = false;
         instance = null;
         mainHandler.removeCallbacks(captureLoop);
         removeOverlays();

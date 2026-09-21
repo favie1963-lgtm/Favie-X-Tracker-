@@ -2,11 +2,13 @@
 <!--
   Status-bar icon for the capture foreground service.
 
-  A notification small icon is drawn as an alpha mask and tinted by the system,
-  so it must be a solid silhouette: the framework icon that was used before
+  A notification small icon is drawn as an alpha mask and tinted by the system, so
+  it must be a solid silhouette: the framework icon that was used before
   (android.R.drawable.ic_menu_view) is a multi-colour asset and renders as an
-  opaque square on many devices. This is the app's reticle mark, which reads at
-  16dp because it is a single shape with a clear hole in the middle.
+  opaque square on many devices. This is the app's mask mark with the eyes knocked
+  out, so it is one shape with two clear holes and still reads at 16dp. The red eyes
+  of the launcher icon cannot survive here — the system replaces every colour with
+  the same tint — so the silhouette carries the mark instead.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
@@ -15,9 +17,9 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M11,2h2v5h-2zM11,17h2v5h-2zM2,11h5v2H2zM17,11h5v2h-5z" />
+        android:fillType="evenOdd"
+        android:pathData="M8.25,3 L15.75,3 A5.25,5.25 0 0 1 21,8.25 L21,15.75 A5.25,5.25 0 0 1 15.75,21 L8.25,21 A5.25,5.25 0 0 1 3,15.75 L3,8.25 A5.25,5.25 0 0 1 8.25,3 Z M9.6,7.8 A1.8,1.8 0 1 0 9.6,11.4 A1.8,1.8 0 1 0 9.6,7.8 Z M14.4,7.8 A1.8,1.8 0 1 0 14.4,11.4 A1.8,1.8 0 1 0 14.4,7.8 Z" />
     <path
         android:fillColor="#FFFFFFFF"
-        android:fillType="evenOdd"
-        android:pathData="M12,4.6A7.4,7.4 0 1,0 12,19.4A7.4,7.4 0 1,0 12,4.6ZM12,9.4A2.6,2.6 0 1,1 12,14.6A2.6,2.6 0 1,1 12,9.4Z" />
+        android:pathData="M8.1,14.1 Q12,16.8 15.9,14.1 L15.9,15.3 Q12,17.9 8.1,15.3 Z" />
 </vector>

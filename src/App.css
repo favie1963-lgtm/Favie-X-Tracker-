@@ -1,6 +1,7 @@
-/* Application chrome. Monochrome by design: the brand is black and white, so
-   the shell uses a near-black header and a single greyscale ramp rather than a
-   colour accent.
+/* Application chrome. Black grounds the shell and red is reserved for live
+   state: the connected dot, the active tab and its underline, the brand mark and
+   the primary action. Everything else stays on the grey ramp so the red always
+   means "this is doing something".
 
    Sizing rules that matter on a phone:
    - The header, nav and footer are fixed height; only <main> scrolls, so the
@@ -28,7 +29,7 @@
   align-items: center;
   gap: 12px;
   flex: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--red-border);
 }
 
 .brand {
@@ -40,7 +41,7 @@
 
 .brand-mark {
   flex: none;
-  color: #fff;
+  color: var(--red);
 }
 
 .app-header h1 {
@@ -53,10 +54,12 @@
   text-overflow: ellipsis;
 }
 
-/* The X is the mark's second letter; give it the weight of the mark. */
+/* The X is the mark's second letter; give it the weight of the mark and the
+   brand red, so the wordmark carries the accent the icon does. */
 .brand-x {
   font-weight: 800;
   padding: 0 0.5px;
+  color: var(--red);
 }
 
 .status-indicator {
@@ -78,7 +81,8 @@
 }
 
 .status.connected {
-  background: #fff;
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(255, 45, 63, 0.18);
   animation: pulse 2s infinite;
 }
 
@@ -129,9 +133,9 @@
 }
 
 .nav-btn.active {
-  color: #fff;
-  border-bottom-color: #fff;
-  background: rgba(255, 255, 255, 0.04);
+  color: var(--red);
+  border-bottom-color: var(--red);
+  background: rgba(255, 45, 63, 0.08);
 }
 
 .app-main {
@@ -215,12 +219,13 @@
 }
 
 .state-pill.on {
-  color: #fff;
-  border-color: #fff;
+  color: var(--red);
+  border-color: var(--red-border);
+  background: var(--red-surface);
 }
 
 .state-pill.on::before {
-  background: #fff;
+  background: var(--red);
   animation: pulse 2s infinite;
 }
 

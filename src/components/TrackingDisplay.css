@@ -102,14 +102,15 @@
   padding: 11px 14px;
   border-radius: var(--radius-sm);
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--red-border);
   font-size: 13px;
   line-height: 1.45;
   color: var(--text);
 }
 
 .live-banner .status-dot {
-  background: #4ade80;
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(255, 45, 63, 0.16);
 }
 
 .live-banner.lost {

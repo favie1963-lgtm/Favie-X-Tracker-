@@ -1,6 +1,8 @@
-/* Design tokens. The brand is black and white, so every surface is a step on a
-   single greyscale ramp rather than a tinted accent. Panels sit on a darker
-   ground than the chrome so the content reads as the lit surface. */
+/* Design tokens. The brand is black and red: black grounds every surface and a
+   single red accent marks anything live — the connected dot, the active tab, the
+   primary action, the target marker. The ramp stays close to neutral grey so the
+   red reads as a signal rather than as decoration, which is why the accent is
+   reserved for state instead of being spread across the chrome. */
 :root {
   --bg: #0a0a0a;
   --surface: #161616;
@@ -10,12 +12,21 @@
   --text: #f5f5f5;
   --text-muted: #a3a3a3;
   --text-faint: #6f6f6f;
-  --ink: #ffffff;
+
+  /* Brand red. --ink is the primary action colour, so buttons, the live status
+     dot and the active tab all land on the same hue as the marker dot. */
+  --red: #ff2d3f;
+  --red-bright: #ff5566;
+  --red-dim: #b3162a;
+  --red-surface: #2a1013;
+  --red-border: #5c1f26;
+
+  --ink: var(--red);
   --ink-inverse: #0a0a0a;
   --danger: #ff6b6b;
   --danger-surface: #2a1414;
   --danger-border: #5c2a2a;
-  --focus: rgba(255, 255, 255, 0.45);
+  --focus: rgba(255, 45, 63, 0.65);
   --radius: 10px;
   --radius-sm: 7px;
   --gap: 16px;
@@ -95,12 +106,12 @@ code {
 }
 
 .btn-primary {
-  background: var(--ink);
-  color: var(--ink-inverse);
+  background: var(--red);
+  color: #ffffff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #e2e2e2;
+  background: var(--red-bright);
 }
 
 .btn-secondary {

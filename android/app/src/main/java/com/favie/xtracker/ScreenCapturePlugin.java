@@ -177,6 +177,23 @@ public class ScreenCapturePlugin extends Plugin {
     }
 
     /**
+     * Blank the screen down to the tracked object, or show everything again.
+     *
+     * Mirrors the toolbar's Isolate/Show all control so the dashboard can drive the
+     * same service state.
+     */
+    @PluginMethod
+    public void setFocusMode(PluginCall call) {
+        ScreenCaptureService service = ScreenCaptureService.getInstance();
+        if (service == null) {
+            call.reject("The tracking toolbar is not running");
+            return;
+        }
+        service.setFocusMode(call.getBoolean("enabled", true));
+        call.resolve(overlayStatus());
+    }
+
+    /**
      * Lock the target at a point the app supplied.
      *
      * Used by the in-app mirror of the toolbar. The normal path is the overlay's
@@ -248,8 +265,9 @@ public class ScreenCapturePlugin extends Plugin {
      * Grab a frame as a JPEG data URL.
      *
      * The overlay workflow does not need this — the service analyses frames in
-     * process — but the dashboard's live preview and the existing pipeline tests
-     * do, so the contract is preserved.
+     * process — but the dashboard's live preview does, so the contract is preserved.
+     * Only the string crosses the bridge: the decoded pixel array is shared with the
+     * service's own capture loop and is never copied or serialised here.
      */
     @PluginMethod
     public void grabFrame(PluginCall call) {
@@ -262,16 +280,9 @@ public class ScreenCapturePlugin extends Plugin {
         int maxWidth = call.getInt("maxWidth", 960);
         int quality = call.getInt("quality", 70);
 
-        CaptureEngine.Frame frame = service.captureFrameForBridge(maxWidth, quality);
-        if (frame == null) {
-            call.resolve(new JSObject().put("dataUrl", (String) null));
-            return;
-        }
-
+        String dataUrl = service.capturePreviewForBridge(maxWidth, quality);
         JSObject result = new JSObject();
-        result.put("dataUrl", frame.dataUrl);
-        result.put("width", frame.width);
-        result.put("height", frame.height);
+        result.put("dataUrl", dataUrl);
         call.resolve(result);
     }
 
@@ -329,12 +340,26 @@ public class ScreenCapturePlugin extends Plugin {
             return;
         }
 
-        startService();
+        try {
+            startService();
+        } catch (Exception e) {
+            // On Android 12+ a foreground service cannot be started from the
+            // background. The consent dialog puts this app back in the foreground,
+            // so this should not happen in the normal flow, but it is reported to
+            // the caller rather than left as a crash.
+            call.reject("Unable to start the capture service: " + e.getMessage(), e);
+            return;
+        }
         awaitServiceReady(() -> handOffProjection(resultCode, data, call), call);
     }
 
     /**
      * Create the projection and give it to the service, which owns it from here.
+     *
+     * Every step is guarded: an exception raised while creating the projection
+     * would otherwise escape a main-thread callback and take the whole process
+     * down, which is the worst possible outcome for a user who has just approved
+     * capture.
      */
     private void handOffProjection(int resultCode, Intent data, PluginCall call) {
         ScreenCaptureService service = ScreenCaptureService.getInstance();
@@ -343,7 +368,21 @@ public class ScreenCapturePlugin extends Plugin {
             return;
         }
 
-        MediaProjection projection = projectionManager.getMediaProjection(resultCode, data);
+        // The service must already be in the foreground with the mediaProjection
+        // type, because Android 14+ refuses a projection created before that and a
+        // projection may only ever create one virtual display.
+        if (!service.isInForeground()) {
+            call.reject("The screen capture service is not ready yet; try again");
+            return;
+        }
+
+        MediaProjection projection;
+        try {
+            projection = projectionManager.getMediaProjection(resultCode, data);
+        } catch (Exception e) {
+            call.reject("Unable to obtain a MediaProjection instance: " + e.getMessage(), e);
+            return;
+        }
         if (projection == null) {
             call.reject("Unable to obtain a MediaProjection instance");
             return;
@@ -358,8 +397,20 @@ public class ScreenCapturePlugin extends Plugin {
             wm.getDefaultDisplay().getRealMetrics(metrics);
         }
 
-        service.attachProjection(projection, metrics.widthPixels, metrics.heightPixels,
-                metrics.densityDpi);
+        try {
+            service.attachProjection(projection, metrics.widthPixels, metrics.heightPixels,
+                    metrics.densityDpi);
+        } catch (Exception e) {
+            // A projection that could not be attached is dead weight; release it
+            // rather than leaving the user's consent tied to a broken session.
+            try {
+                projection.stop();
+            } catch (Exception ignored) {
+                // Already gone.
+            }
+            call.reject("Unable to start screen capture: " + e.getMessage(), e);
+            return;
+        }
 
         JSObject result = overlayStatus();
         result.put("status", "started");
@@ -459,6 +510,7 @@ public class ScreenCapturePlugin extends Plugin {
         result.put("capture", service != null && service.isCaptureActive());
         result.put("mode", service != null ? service.getStateName() : "ready");
         result.put("selecting", service != null && service.isSelecting());
+        result.put("focus", service != null && service.isFocusMode());
         result.put("overlayPermission", hasOverlayPermission());
         JSObject target = service != null ? targetJson(service) : null;
         if (target != null) {

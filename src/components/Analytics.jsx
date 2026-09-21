@@ -27,7 +27,7 @@ import { trackingService } from '../services/tracking';
  */
 const AXIS_COLOR = '#a3a3a3';
 const GRID_COLOR = '#2c2c2c';
-const SERIES_COLOR = '#ffffff';
+const SERIES_COLOR = '#ff2d3f';
 
 const tooltipStyles = {
   contentStyle: {

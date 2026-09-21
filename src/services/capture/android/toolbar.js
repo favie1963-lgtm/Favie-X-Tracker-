@@ -96,6 +96,20 @@ export const overlayToolbar = {
     }
   },
 
+  /**
+   * Blank the screen down to the tracked object, or show everything again.
+   *
+   * Mirrors the toolbar's Isolate/Show all control. The veil is drawn by the
+   * native overlay window, so this only sets service state.
+   */
+  async setFocusMode(enabled) {
+    try {
+      return await ScreenCapture.setFocusMode({ enabled });
+    } catch (error) {
+      return { status: 'error', message: error?.message ?? 'Unable to change focus mode' };
+    }
+  },
+
   /** Whether overlay permission has been granted. */
   async hasOverlayPermission() {
     try {

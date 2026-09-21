@@ -5,6 +5,7 @@
 
     <!-- Foreground capture notification. -->
     <string name="capture_notification_text">Screen tracking is active</string>
+    <string name="capture_notification_stop">Stop</string>
     <string name="capture_channel_name">Screen tracking</string>
     <string name="capture_channel_description">Shown while Favie X Tracker is capturing the screen</string>
 
@@ -21,5 +22,8 @@
     <string name="toolbar_selecting">Tap an object to select it</string>
     <string name="toolbar_tracking">Target locked</string>
     <string name="toolbar_lost">Target lost</string>
+    <!-- Black-out toggle: clears the screen and leaves only the tracked object. -->
+    <string name="toolbar_isolate">Isolate</string>
+    <string name="toolbar_show_all">Show all</string>
     <string name="marker_selecting">Tap the object to track</string>
 </resources>

@@ -130,15 +130,51 @@ public class OverlayToolbarViewTest {
     }
 
     @Test
-    public void trackingStateOffersChangeAndStop() {
+    public void trackingStateOffersChangeIsolateAndStop() {
         Recorder recorder = new Recorder();
         OverlayToolbarView view = layout(recorder);
 
         view.syncState(false, true, false);
 
         OverlayToolbarView.Control[] controls = view.controlsForTest();
+        assertEquals(3, controls.length);
         assertEquals(OverlayToolbarView.ACTION_CHANGE, controls[0].action);
-        assertEquals(OverlayToolbarView.ACTION_STOP, controls[1].action);
+        assertEquals(OverlayToolbarView.ACTION_ISOLATE, controls[1].action);
+        assertEquals(OverlayToolbarView.ACTION_STOP, controls[2].action);
+    }
+
+    /**
+     * While the screen is blanked down to the target, the toggle has to offer the way
+     * back out. Leaving it reading "Isolate" would give the user a control that does
+     * nothing, and no way to restore the rest of the screen.
+     */
+    @Test
+    public void trackingStateOffersShowAllWhenAlreadyIsolated() {
+        Recorder recorder = new Recorder();
+        OverlayToolbarView view = layout(recorder);
+
+        view.syncState(false, true, false, true);
+
+        OverlayToolbarView.Control[] controls = view.controlsForTest();
+        assertEquals(3, controls.length);
+        assertEquals(OverlayToolbarView.ACTION_SHOW_ALL, controls[1].action);
+        assertTrue("the bar must report the isolated state", view.isFocusMode());
+    }
+
+    /**
+     * The black-out toggle changes the button set without any change in tracker
+     * state, so the rebuild cannot key off the state alone.
+     */
+    @Test
+    public void togglingFocusRebuildsTheControlSet() {
+        Recorder recorder = new Recorder();
+        OverlayToolbarView view = layout(recorder);
+
+        view.syncState(false, true, false, false);
+        assertEquals(OverlayToolbarView.ACTION_ISOLATE, view.controlsForTest()[1].action);
+
+        view.syncState(false, true, false, true);
+        assertEquals(OverlayToolbarView.ACTION_SHOW_ALL, view.controlsForTest()[1].action);
     }
 
     @Test
@@ -328,7 +364,7 @@ public class OverlayToolbarViewTest {
         view.setStats(120, 24.5f);
         view.setStats(240, 23.0f);
 
-        assertEquals(OverlayToolbarView.ACTION_STOP, view.controlsForTest()[1].action);
+        assertEquals(OverlayToolbarView.ACTION_STOP, view.controlsForTest()[2].action);
         tapControl(view, OverlayToolbarView.ACTION_STOP);
         assertEquals(OverlayToolbarView.ACTION_STOP, recorder.actions.get(0));
     }

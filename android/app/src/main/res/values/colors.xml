@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Brand is black and white, so the accent ramp is greyscale. -->
-    <color name="colorPrimary">#000000</color>
-    <color name="colorPrimaryDark">#000000</color>
-    <color name="colorAccent">#FFFFFF</color>
+    <!-- Brand is black and red. Primary is the accent the whole app uses for live
+         state: the primary button, the connected dot, the active tab and the
+         target marker. -->
+    <color name="colorPrimary">#FF2D3F</color>
+    <color name="colorPrimaryDark">#B3162A</color>
+    <color name="colorAccent">#FF2D3F</color>
 
     <!-- Splash ground; also used as the window background to avoid a white
          flash between the splash and the WebView's first paint. -->

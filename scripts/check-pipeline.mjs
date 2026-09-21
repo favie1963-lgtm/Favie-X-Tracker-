@@ -168,6 +168,13 @@ nativeCapture.stop = async () => {};
 const service = new TrackingService();
 service.config.capture_interval = 10;
 
+// This test covers the in-page capture path: the native bridge decode, the
+// ImageBitmap width/height ordering and the detection pipeline. On Android the
+// app does not use that path — TrackingService.start() routes to the foreground
+// service, whose tracker is covered by NativeTargetTrackerTest on the JVM — so the
+// toolbar shortcut is disabled here to reach the code under test.
+service.isToolbarSupported = () => false;
+
 await service.start();
 check('capture source is native', service.source?.kind === 'native', `got ${service.source?.kind}`);
 

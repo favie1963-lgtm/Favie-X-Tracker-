@@ -43,6 +43,10 @@ export class TrackingService {
     this.running = false;
     this.source = null;
     this.loopTimer = null;
+    /** In-page loop paused because the page is hidden. Browser build only. */
+    this.paused = false;
+    this.visibilityBound = false;
+    this.onVisibility = null;
     this.frameCount = 0;
     this.lastFrame = null;
     /** Lightweight view of the newest frame, safe to hand to React. */
@@ -109,6 +113,15 @@ export class TrackingService {
   async start() {
     if (this.running) return { status: 'already-running' };
 
+    // On Android the foreground service owns capture, the tracker and the marker,
+    // and it keeps running when this WebView is backgrounded or destroyed. Starting
+    // a WebView setInterval loop on top of that would analyse the same frames a
+    // second time in a process the platform may suspend at any moment, so the
+    // toolbar path is taken instead and no local loop is created.
+    if (this.isToolbarSupported()) {
+      return this.enableToolbar();
+    }
+
     this.source = await createCaptureSource(this.captureOptions());
 
     if (this.source.kind === 'none') {
@@ -124,16 +137,60 @@ export class TrackingService {
     this.tracker.reset();
     this.analytics.start();
 
+    this.startLocalLoop();
+    this.bindVisibility();
+
+    this.emit();
+    return { status: 'started', source: this.source.kind };
+  }
+
+  /** Begin the in-page capture loop. Only used when the native toolbar is absent. */
+  startLocalLoop() {
+    if (this.loopTimer !== null) return;
     const interval = Math.max(50, this.config.capture_interval);
     this.loopTimer = setInterval(() => {
+      // A hidden page still fires timers in a WebView, and analysing frames the
+      // user cannot see burns battery for nothing. The native path does not need
+      // this because the service has no visibility concept to begin with.
+      if (this.paused) return;
       this.tick().catch((err) => {
         this.lastError = err?.message ?? String(err);
         this.emit();
       });
     }, interval);
+  }
 
-    this.emit();
-    return { status: 'started', source: this.source.kind };
+  /**
+   * Pause or resume the in-page loop without tearing the session down.
+   *
+   * Kept separate from {@link #stop}: returning to the page must resume the same
+   * session, not start a new one.
+   */
+  setPaused(paused) {
+    this.paused = Boolean(paused);
+  }
+
+  /**
+   * Pause the in-page loop while the page is hidden.
+   *
+   * Only relevant to the browser build; the Android path has no loop here. The
+   * listener is registered once and removed on stop.
+   */
+  bindVisibility() {
+    if (this.visibilityBound || typeof document === 'undefined') return;
+    if (typeof document.addEventListener !== 'function') return;
+    this.visibilityBound = true;
+    this.onVisibility = () => this.setPaused(document.hidden === true);
+    document.addEventListener('visibilitychange', this.onVisibility);
+  }
+
+  unbindVisibility() {
+    if (!this.visibilityBound) return;
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', this.onVisibility);
+    }
+    this.visibilityBound = false;
+    this.onVisibility = null;
   }
 
   async stop() {
@@ -142,6 +199,8 @@ export class TrackingService {
     clearInterval(this.loopTimer);
     this.loopTimer = null;
     this.running = false;
+    this.paused = false;
+    this.unbindVisibility();
     await this.source?.stop();
     this.source = null;
     this.analytics.stop();
@@ -339,6 +398,22 @@ export class TrackingService {
   /** Current target report. */
   getTarget() {
     return this.targetTracker.report();
+  }
+
+  /**
+   * Blank the screen down to the tracked object, or show everything again.
+   *
+   * The veil is a native overlay window, so on Android this is a state change on the
+   * service and nothing is drawn here. Returns {status:'unsupported'} rather than
+   * pretending to succeed in the browser, where there is no overlay to dim.
+   */
+  async setFocusMode(enabled) {
+    if (this.isToolbarSupported()) {
+      const result = await overlayToolbar.setFocusMode(enabled);
+      this.emit();
+      return result;
+    }
+    return { status: 'unsupported' };
   }
 
   // --- On-screen toolbar ----------------------------------------------------
