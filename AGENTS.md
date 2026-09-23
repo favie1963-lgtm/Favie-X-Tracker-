@@ -101,6 +101,39 @@ the same `layoutButtons` the draw pass uses.
   in the middle while the letters scrambled onto the wrong cups. It only misfired at
   some swap speeds, so sampling a couple of speeds missed it.
   `CupTrackerTest.lettersSurviveASwapAtEveryRealisticSpeed` walks 5..60 steps.
+- `CupTracker`'s prediction applies exactly *one* tick of velocity, never
+  `v * missedTicks`. The miss-count form omitted the tick being predicted: a
+  just-matched cup was predicted back at its last observed position while a cup that
+  had missed a frame was predicted forward by the full miss count. On the frame where
+  all three cups coincide only one component exists and only one identity can be
+  matched, so the others froze; when the cups separated they re-matched whichever cup
+  was nearest their stale position and the letters swapped onto each other's cups —
+  at four ticks per outer swap, a fast but ordinary shuffle. Two rules come out of
+  this: an unmatched identity dead-reckons one tick along its own velocity
+  (`Identity.coast`) rather than standing still, and `carryMergedBlobs` runs *before*
+  that coast so an identity inside a merged blob does not get advanced twice.
+  Asserting the order string is not enough — it can read correctly while two letters
+  have swapped. `CupTrackerTest.eachLettersIdentitySurvivesAFastOuterSwap` and
+  `...SurvivesARotation` lock each cup in turn and check the letter's own
+  destination across 4..24 steps. Below four ticks a cup moves more than its own
+  width per frame and no tracker can disambiguate it; that is physics, not a bug.
+- The A/B/C letters belong on *all three* cups, every frame, from the first
+  detection — not only on the locked cup. `TargetMarkerView.setCups` is fed from the
+  same `CupTracker.readout()` sorted pass that feeds the toolbar strip (the readout
+  carries each cup's own box via `CupTracker.CupTruth`), so the on-screen chips and
+  the strip can never describe different frames. `clearTargetMarker` hides only the
+  dot; `clearMarker` clears the letters too. The marker's mode stays `TRACKING`
+  whenever tracking is live even with nothing locked, because mode `IDLE` suppresses
+  the cup chips and the letters must be visible before the user picks a cup.
+- A `MediaProjection` callback must be bound to *its* projection, never shared. The
+  engine stops the previous projection when `attachProjection` replaces it, so the
+  platform delivers that superseded projection's `onStop` *after* the new one is
+  attached; with one shared callback that stop tore the fresh session down and the
+  app appeared to stop capturing on its own right after a re-grant. `onStop` is only
+  real when it names the currently attached projection
+  (`ScreenCaptureService.stopBelongsToLiveProjection`), and `stopCapture` /
+  `teardownProjection` clear the reference before they release the engine so their
+  own induced stop is ignored. `ScreenCaptureServiceTest` pins the rule.
 - The toolbar's letters strip reads `CupTracker.readout()`, which returns the order
   and the per-cup positions from one sorted pass. Reading them from two calls let
   the strip pair a letter with another cup's position on a frame where the order

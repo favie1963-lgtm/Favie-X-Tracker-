@@ -9,6 +9,8 @@ import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -59,6 +61,16 @@ public class TargetMarkerView extends View {
     /** White ring drawn around the dot so it reads on a dark object. */
     private static final float DOT_RING_DP = 2.5f;
 
+    /** Size of a cup's letter chip, in dp. */
+    private static final float CHIP_HEIGHT_DP = 20f;
+    private static final float CHIP_TEXT_DP = 12f;
+
+    /** Brand red plate for the locked cup; neutral plate for the other two. */
+    private static final int COLOR_CHIP_LOCKED = 0xE6FF2D3F;
+    private static final int COLOR_CHIP_LOCKED_EDGE = 0xCCFFFFFF;
+    private static final int COLOR_CHIP_IDLE = 0xD9101010;
+    private static final int COLOR_CHIP_IDLE_EDGE = 0x66FFFFFF;
+
     /** Padding added around the target's own half-size to form the focus hole. */
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -74,6 +86,35 @@ public class TargetMarkerView extends View {
     private final RectF markerRect = new RectF();
     private boolean hasMarker = false;
     private String label = "";
+
+    /**
+     * Every tracked cup, as an analysis-space box plus the letter bound to it.
+     *
+     * Drawn as a group, not one at a time: the user has to see A, B and C on all
+     * three cups at once, each letter glued to its own cup for the whole shuffle.
+     * The locked cup is in this list too; it is styled differently rather than
+     * drawn a second time on top of itself.
+     */
+    private final List<CupLabel> cups = new ArrayList<>();
+
+    /** A tracked cup's analysis-space box and the letter that travels with it. */
+    public static class CupLabel {
+        public final float x;
+        public final float y;
+        public final float w;
+        public final float h;
+        public final String label;
+        public final boolean locked;
+
+        public CupLabel(float x, float y, float w, float h, String label, boolean locked) {
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
+            this.label = label;
+            this.locked = locked;
+        }
+    }
 
     private int frameWidth;
     private int frameHeight;
@@ -127,7 +168,39 @@ public class TargetMarkerView extends View {
     public void clearMarker() {
         hasMarker = false;
         label = "";
+        cups.clear();
         invalidate();
+    }
+
+    /**
+     * Hide only the single-target dot and its caption.
+     *
+     * Used when tracking is idle but the cups are still detected: the letters must
+     * stay on the cups, so clearing the dot must not take the cup chips with it.
+     */
+    public void clearTargetMarker() {
+        hasMarker = false;
+        label = "";
+        invalidate();
+    }
+
+    /**
+     * Set the whole set of tracked cups and the letter bound to each one.
+     *
+     * Called on every fresh frame from the service's single identity pass, so the
+     * letters on screen always describe the same frame as the toolbar strip. The
+     * caller's list is copied: the service builds it per frame and reuses nothing,
+     * but the view owns what it draws.
+     */
+    public void setCups(List<CupLabel> next) {
+        cups.clear();
+        if (next != null) cups.addAll(next);
+        invalidate();
+    }
+
+    /** The cups last set, for tests. */
+    List<CupLabel> getCups() {
+        return new ArrayList<>(cups);
     }
 
     /** Screen x for a frame-space x. */
@@ -150,7 +223,15 @@ public class TargetMarkerView extends View {
             drawSelectionHint(canvas);
             return;
         }
-        if (mode == MODE_IDLE || !hasMarker) return;
+        if (mode == MODE_IDLE) return;
+
+        // Every tracked cup gets its letter, every frame: A, B and C are pinned to
+        // the three cups as soon as they are found and travel with them through the
+        // shuffle. Drawn before the locked-cup dot so the dot's caption can sit over
+        // the letters without being clipped by another chip.
+        drawCupLabels(canvas);
+
+        if (!hasMarker) return;
 
         float left = scaleX(markerRect.left);
         float top = scaleY(markerRect.top);
@@ -162,6 +243,63 @@ public class TargetMarkerView extends View {
 
         drawDot(canvas, cx, cy);
         drawLabel(canvas, cx, cy, bottom);
+    }
+
+    /**
+     * Paint a letter chip centred above each tracked cup.
+     *
+     * The chip is a small rounded plate with the letter on it, so a letter stays
+     * legible over any table or cup pattern. The locked cup's chip is the brand red
+     * and the others are the neutral surface, which is what tells the user at a
+     * glance which cup the marker will follow without hiding the other two letters.
+     */
+    private void drawCupLabels(Canvas canvas) {
+        if (cups.isEmpty()) return;
+
+        paint.setStyle(Paint.Style.FILL);
+        paint.setTypeface(android.graphics.Typeface.create("sans-serif-medium",
+                android.graphics.Typeface.BOLD));
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTextSize(dp(CHIP_TEXT_DP));
+
+        float padH = dp(8);
+        float chipH = dp(CHIP_HEIGHT_DP);
+
+        for (CupLabel cup : cups) {
+            if (cup.label == null || cup.label.isEmpty()) continue;
+
+            float cx = scaleX(cup.x + cup.w / 2f);
+            float top = scaleY(cup.y);
+
+            float textWidth = paint.measureText(cup.label);
+            float chipW = Math.max(chipH, textWidth + padH * 2);
+            float chipCx = clamp(cx, chipW / 2f + dp(2),
+                    getWidth() - chipW / 2f - dp(2));
+            // Above the cup by default; below it when the cup is against the top
+            // edge, so the chip never runs off the screen.
+            float chipTop = top - chipH - dp(6);
+            if (chipTop < dp(2)) chipTop = top + dp(6);
+
+            RectF plate = new RectF(chipCx - chipW / 2f, chipTop,
+                    chipCx + chipW / 2f, chipTop + chipH);
+
+            paint.setColor(cup.locked ? COLOR_CHIP_LOCKED : COLOR_CHIP_IDLE);
+            canvas.drawRoundRect(plate, dp(4), dp(4), paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1));
+            paint.setColor(cup.locked ? COLOR_CHIP_LOCKED_EDGE : COLOR_CHIP_IDLE_EDGE);
+            canvas.drawRoundRect(plate, dp(4), dp(4), paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.WHITE);
+            canvas.drawText(cup.label, plate.centerX(),
+                    plate.centerY() - (paint.descent() + paint.ascent()) / 2f, paint);
+        }
+    }
+
+    private static float clamp(float v, float lo, float hi) {
+        if (hi < lo) return lo;
+        return v < lo ? lo : (v > hi ? hi : v);
     }
 
     /**

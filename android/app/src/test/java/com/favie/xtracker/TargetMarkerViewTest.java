@@ -1,6 +1,7 @@
 package com.favie.xtracker;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -10,6 +11,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Tests for {@link TargetMarkerView}.
@@ -89,5 +93,80 @@ public class TargetMarkerViewTest {
         plate.offset(5f, 5f);
         assertTrue(plate.left < plate.right);
         assertTrue(plate.top < plate.bottom);
+    }
+
+    /**
+     * All three cups are labelled, not only the locked one.
+     *
+     * The app is supposed to put A, B and C on the three cups as soon as it finds
+     * them, so the user can follow the letters through a shuffle. Drawing only the
+     * locked cup left the other two unlabelled, which is not what was asked for.
+     * The set is built per frame from the tracker's single identity pass, so the
+     * view must carry exactly what it is handed and copy it.
+     */
+    @Test
+    public void everyTrackedCupCarriesItsLetter() {
+        TargetMarkerView view = new TargetMarkerView(
+                androidx.test.core.app.ApplicationProvider.getApplicationContext());
+
+        List<TargetMarkerView.CupLabel> cups = new ArrayList<>();
+        cups.add(new TargetMarkerView.CupLabel(120f, 250f, 110f, 120f, "A", false));
+        cups.add(new TargetMarkerView.CupLabel(420f, 250f, 110f, 120f, "B", true));
+        cups.add(new TargetMarkerView.CupLabel(720f, 250f, 110f, 120f, "C", false));
+        view.setCups(cups);
+
+        List<TargetMarkerView.CupLabel> held = view.getCups();
+        assertEquals("all three cups must be labelled", 3, held.size());
+        assertEquals("A", held.get(0).label);
+        assertEquals("B", held.get(1).label);
+        assertEquals("C", held.get(2).label);
+        assertTrue("exactly the locked cup is flagged", held.get(1).locked);
+        assertFalse(held.get(0).locked);
+        assertFalse(held.get(2).locked);
+
+        // The view owns its list: clearing the one it was handed must not drop the
+        // letters that are already drawn.
+        cups.clear();
+        assertEquals(3, view.getCups().size());
+        assertEquals(120f, view.getCups().get(0).x, 1e-3f);
+    }
+
+    /** Clearing the dot must not take the cup letters with it. */
+    @Test
+    public void clearingTheTargetKeepsTheCupLetters() {
+        TargetMarkerView view = new TargetMarkerView(
+                androidx.test.core.app.ApplicationProvider.getApplicationContext());
+
+        List<TargetMarkerView.CupLabel> cups = new ArrayList<>();
+        cups.add(new TargetMarkerView.CupLabel(120f, 250f, 110f, 120f, "A", false));
+        cups.add(new TargetMarkerView.CupLabel(420f, 250f, 110f, 120f, "B", false));
+        view.setCups(cups);
+        view.setMarker(10f, 20f, 30f, 40f, "TARGET");
+
+        view.clearTargetMarker();
+        assertEquals("the letters stay on the cups", 2, view.getCups().size());
+
+        view.clearMarker();
+        assertEquals("ending tracking clears them", 0, view.getCups().size());
+    }
+
+    /** The cup chips must be drawable without a target dot, which Robolectric can do. */
+    @Test
+    public void cupLettersDrawWithoutATargetMarker() {
+        TargetMarkerView view = new TargetMarkerView(
+                androidx.test.core.app.ApplicationProvider.getApplicationContext());
+        view.setGeometry(960, 540, 1080, 1920);
+
+        List<TargetMarkerView.CupLabel> cups = new ArrayList<>();
+        cups.add(new TargetMarkerView.CupLabel(120f, 250f, 110f, 120f, "A", false));
+        cups.add(new TargetMarkerView.CupLabel(420f, 250f, 110f, 120f, "B", true));
+        cups.add(new TargetMarkerView.CupLabel(720f, 250f, 110f, 120f, "C", false));
+        view.setCups(cups);
+        view.setMode(2);
+
+        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(1080, 1920,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        view.draw(new android.graphics.Canvas(bmp));
+        assertEquals(3, view.getCups().size());
     }
 }

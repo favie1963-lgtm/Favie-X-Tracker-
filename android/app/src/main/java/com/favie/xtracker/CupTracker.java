@@ -153,12 +153,42 @@ public class CupTracker {
             this.baseH = cup.h;
         }
 
+        /**
+         * Where this cup is expected to be on the next frame.
+         *
+         * One tick of velocity is always applied, not {@code missedTicks} of it.
+         * The subtraction that used to be here — {@code cup + v * missedTicks} —
+         * omitted the tick currently being predicted, so a cup that had just been
+         * matched was predicted back at its last observed position while a cup that
+         * had missed a frame was predicted forward by the full miss count. On the
+         * frame where all three cups overlap and only one can be matched, the two
+         * unmatched identities then froze and, when the cups separated, re-matched
+         * whichever cup was nearest their stale position — the letters scrambled.
+         * A constant-velocity one-tick lead is the standard motion model and is what
+         * keeps each identity's prediction on its own cup through the crossing.
+         */
         float predictedCenterX() {
-            return cup.centerX() + vx * missedTicks;
+            return cup.centerX() + vx;
         }
 
         float predictedCenterY() {
-            return cup.centerY() + vy * missedTicks;
+            return cup.centerY() + vy;
+        }
+
+        /**
+         * Carry the identity one tick along its own velocity.
+         *
+         * Used when a detection could not be matched to this cup: during the frame
+         * where two or more cups coincide there is a single component for the group,
+         * so the identity that is not the one matched to it has to keep travelling
+         * on dead reckoning. Without this it stayed put and was left behind by its
+         * cup, which is the other half of the scramble the one-tick lead fixes.
+         */
+        void coast() {
+            float nx = cup.centerX() + vx;
+            float ny = cup.centerY() + vy;
+            this.cup = new Cup(nx - baseW / 2f, ny - baseH / 2f, baseW, baseH);
+            missedTicks++;
         }
 
         /** Whether a detection is too wide to be this cup, i.e. a merge of cups. */
@@ -285,10 +315,31 @@ public class CupTracker {
         public final String order;
         /** Centre X of each cup, in reading order, as a fraction of frame width. */
         public final float[] positions;
+        /**
+         * Each tracked cup's box and bound letter, in reading order.
+         *
+         * The on-screen letters and the toolbar strip both need to know where every
+         * cup is, and both must agree. Returning the boxes here rather than making a
+         * second pass means the marker's chips and the strip are produced from the
+         * same sorted snapshot of the identities.
+         */
+        public final java.util.List<CupTruth> cups;
 
-        ShuffleReadout(String order, float[] positions) {
+        ShuffleReadout(String order, float[] positions, java.util.List<CupTruth> cups) {
             this.order = order;
             this.positions = positions;
+            this.cups = cups;
+        }
+    }
+
+    /** One cup's box and the letter bound to it, as reported by {@link #readout}. */
+    public static class CupTruth {
+        public final String label;
+        public final Cup cup;
+
+        CupTruth(String label, Cup cup) {
+            this.label = label;
+            this.cup = cup;
         }
     }
 
@@ -298,14 +349,16 @@ public class CupTracker {
 
         StringBuilder sb = new StringBuilder();
         float[] positions = new float[byX.size()];
+        List<CupTruth> cups = new ArrayList<>(byX.size());
         for (int i = 0; i < byX.size(); i++) {
             Identity id = byX.get(i);
             if (sb.length() > 0) sb.append(' ');
             sb.append(id.label);
             float t = frameWidth <= 0 ? 0f : id.cup.centerX() / frameWidth;
             positions[i] = t < 0f ? 0f : (t > 1f ? 1f : t);
+            cups.add(new CupTruth(id.label, id.cup));
         }
-        return new ShuffleReadout(sb.toString(), positions);
+        return new ShuffleReadout(sb.toString(), positions, cups);
     }
 
     // --- Internals ------------------------------------------------------------
@@ -371,11 +424,18 @@ public class CupTracker {
             id.missedTicks = 0;
         }
 
-        for (int i = 0; i < idList.size(); i++) {
-            if (!idUsed[i]) idList.get(i).missedTicks++;
-        }
-
         carryMergedBlobs(cups, idList, idUsed);
+
+        // Every identity still unmatched is carried one tick along its own velocity.
+        // On the frame where all three cups coincide there is a single component and
+        // two identities come out of the greedy pass unmatched; leaving them at their
+        // last observed position is what let the nearest-cup re-match scramble the
+        // letters when the cups separated. Dead reckoning keeps each one on its own
+        // cup until it is detected again. An identity whose cup has genuinely left the
+        // board coasts off the edge and is dropped by the grace period.
+        for (int i = 0; i < idList.size(); i++) {
+            if (!idUsed[i]) idList.get(i).coast();
+        }
 
         // An unmatched detection is a cup that has just entered the scene. It only
         // gets a letter while the game has room for it; anything else is a

@@ -131,13 +131,27 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private Handler analysisHandler;
 
     /**
+     * The projection currently attached to the engine, or null.
+     *
+     * Used to tell a callback from the live projection apart from one belonging to a
+     * projection that has already been superseded. The engine stops the previous
+     * projection when a new one is attached, and the platform then delivers that
+     * old projection's {@code onStop}. Without this reference that callback is
+     * indistinguishable from a real end-of-capture and would tear the new session
+     * down.
+     */
+    private volatile android.media.projection.MediaProjection attachedProjection;
+
+    /**
      * Keeps the engine in step with the system.
      *
-     * {@code onStop} fires when the user revokes capture or the system reclaims the
-     * token, so the engine is released rather than left pointing at a dead
-     * projection. {@code onCapturedContentResize} (API 34+) reports a new size when
-     * the captured content changes, and the buffers only match it once they follow
-     * that size.
+     * Built fresh for each projection rather than shared: {@code onStop} fires when
+     * the user revokes capture, the system reclaims the token, or a previous
+     * projection is replaced by a new consent. The last case must not end the
+     * session, so the callback is bound to the projection it was registered for and
+     * ignored once a different one is attached. {@code onCapturedContentResize}
+     * (API 34+) reports a new size when the captured content changes, and the
+     * buffers only match it once they follow that size.
      *
      * Nothing here stops the service. The projection ending is not the same event as
      * the user asking for the session to end: the platform can reclaim a token and
@@ -145,31 +159,56 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
      * notification and the toolbar down. Only an explicit user action stops the
      * service.
      */
-    private final android.media.projection.MediaProjection.Callback projectionCallback =
-            new android.media.projection.MediaProjection.Callback() {
-                @Override
-                public void onStop() {
-                    mainHandler.post(() -> {
-                        teardownProjection();
-                        markSessionActive(false);
-                        broadcastState();
-                    });
-                }
+    private android.media.projection.MediaProjection.Callback createProjectionCallback(
+            final android.media.projection.MediaProjection projection) {
+        return new android.media.projection.MediaProjection.Callback() {
+            @Override
+            public void onStop() {
+                mainHandler.post(() -> {
+                    // A projection that is no longer the attached one has been
+                    // replaced by a newer consent; its stop is not this session's.
+                    if (!stopBelongsToLiveProjection(attachedProjection, projection)) return;
+                    attachedProjection = null;
+                    teardownProjection();
+                    markSessionActive(false);
+                    broadcastState();
+                });
+            }
 
-                @Override
-                public void onCapturedContentResize(int width, int height) {
-                    if (width <= 0 || height <= 0) return;
-                    mainHandler.post(() -> {
-                        try {
-                            engine.resize(width, height);
-                        } catch (Exception ignored) {
-                            // A resize that the platform refuses leaves the previous
-                            // geometry in place; the next frame is then simply the
-                            // old size rather than a crash.
-                        }
-                    });
-                }
-            };
+            @Override
+            public void onCapturedContentResize(int width, int height) {
+                if (width <= 0 || height <= 0) return;
+                mainHandler.post(() -> {
+                    if (!stopBelongsToLiveProjection(attachedProjection, projection)) return;
+                    try {
+                        engine.resize(width, height);
+                    } catch (Exception ignored) {
+                        // A resize that the platform refuses leaves the previous
+                        // geometry in place; the next frame is then simply the
+                        // old size rather than a crash.
+                    }
+                });
+            }
+        };
+    }
+
+    /**
+     * Whether a callback delivered for {@code stopped} belongs to the live session.
+     *
+     * The engine stops the previous projection when a new consent replaces it, so
+     * the platform delivers that old projection's {@code onStop} *after* the new one
+     * is attached. Treating it as the end of capture tore the new session down —
+     * the app stopped capturing on its own, right after a re-grant. A stop is only
+     * real when it names the projection that is currently attached; anything else is
+     * a superseded projection and is ignored.
+     *
+     * Extracted rather than inlined so the rule can be asserted directly: it is the
+     * whole fix for the self-stopping capture, and it cannot be exercised through a
+     * real projection in a JVM test.
+     */
+    static boolean stopBelongsToLiveProjection(Object attached, Object stopped) {
+        return attached != null && attached == stopped;
+    }
 
     private volatile boolean active = false;
     private volatile boolean selecting = false;
@@ -449,6 +488,9 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private void teardownProjection() {
         active = false;
         selecting = false;
+        // The projection is already dead when this runs, so forget it: a later
+        // consent must not be judged against it.
+        attachedProjection = null;
         stopAnalysisThread();
         synchronized (targetLock) {
             tracker.reset();
@@ -582,9 +624,15 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
      */
     public void attachProjection(android.media.projection.MediaProjection projection,
                                  int width, int height, int densityDpi) {
+        // The callback is bound to this projection so that a stop delivered for a
+        // projection that a later consent replaces cannot end the new session.
+        android.media.projection.MediaProjection.Callback callback =
+                createProjectionCallback(projection);
         boolean callbackRegistered = false;
+        // The engine swaps in this projection; anything still attached is old.
+        attachedProjection = projection;
         try {
-            projection.registerCallback(projectionCallback, mainHandler);
+            projection.registerCallback(callback, mainHandler);
             callbackRegistered = true;
         } catch (Exception ignored) {
             // Some platforms reject a second callback; capture still works, but
@@ -596,11 +644,12 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         } catch (RuntimeException e) {
             if (callbackRegistered) {
                 try {
-                    projection.unregisterCallback(projectionCallback);
+                    projection.unregisterCallback(callback);
                 } catch (Exception ignored) {
                     // Best effort.
                 }
             }
+            if (attachedProjection == projection) attachedProjection = null;
             throw e;
         }
 
@@ -709,6 +758,7 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         String caption;
         String order;
         float[] cupPositions = new float[0];
+        java.util.List<TargetMarkerView.CupLabel> cupLabels = new java.util.ArrayList<>();
         float boxX = 0f, boxY = 0f, boxW = 0f, boxH = 0f;
         int boxColor = 0;
         float confidence = 0f;
@@ -729,6 +779,16 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
             CupTracker.ShuffleReadout readout = cups.readout(frame.width);
             order = readout.order;
             cupPositions = readout.positions;
+            // Every tracked cup is labelled on screen, not just the locked one: the
+            // user asked to see A, B and C pinned to all three cups so the letters
+            // can be followed through the shuffle. The letters come from the same
+            // pass that produced the readout, so the on-screen chips and the toolbar
+            // strip can never describe different frames.
+            for (CupTracker.CupTruth truth : readout.cups) {
+                cupLabels.add(new TargetMarkerView.CupLabel(
+                        truth.cup.x, truth.cup.y, truth.cup.w, truth.cup.h,
+                        truth.label, truth.label.equals(cups.getLockedLabel())));
+            }
             lost = lockedCup == null && tracker.getState() == NativeTargetTracker.STATE_LOST;
             locked = lockedCup != null || tracker.isLocked();
 
@@ -757,6 +817,7 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
         final String captionForMarker = caption;
         final String orderForToolbar = order;
         final float[] positionsForToolbar = cupPositions;
+        final java.util.List<TargetMarkerView.CupLabel> labelsForMarker = cupLabels;
         final float bx = boxX, by = boxY, bw = boxW, bh = boxH;
         final int toolbarFrames = (int) frameCount;
         final float toolbarFps = fps;
@@ -774,6 +835,10 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
             } else if (markerView != null) {
                 markerView.setGeometry(frame.width, frame.height,
                         engine.getWidth(), engine.getHeight());
+                // The letters go up on every tracked cup before the state branch,
+                // because the user has to see all three throughout the shuffle, not
+                // only while the marker's own box is being drawn.
+                markerView.setCups(labelsForMarker);
                 if (cupForMarker != null) {
                     markerView.setMode(MODE_TRACKING);
                     markerView.setMarker(bx, by, bw, bh, captionForMarker);
@@ -784,8 +849,8 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
                     markerView.setMode(MODE_TRACKING);
                     markerView.setMarker(bx, by, bw, bh, captionForMarker);
                 } else {
-                    markerView.setMode(MODE_IDLE);
-                    markerView.clearMarker();
+                    markerView.setMode(MODE_TRACKING);
+                    markerView.clearTargetMarker();
                 }
             }
 
@@ -933,7 +998,12 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
             } else if (locked) {
                 markerView.setMode(MODE_TRACKING);
             } else {
-                markerView.setMode(MODE_IDLE);
+                // Still the tracking mode: the cup letters must stay up even before
+                // the user has locked one of the cups, and a mode of idle would hide
+                // them. With no cups set this draws nothing, so it is also the
+                // correct state after a reset.
+                markerView.setMode(MODE_TRACKING);
+                markerView.clearTargetMarker();
             }
         }
 
@@ -1187,6 +1257,9 @@ public class ScreenCaptureService extends Service implements OverlayToolbarView.
     private void stopCapture() {
         active = false;
         selecting = false;
+        // Drop the reference before the engine stops the projection, so the stop
+        // callback this call provokes is recognised as our own and ignored.
+        attachedProjection = null;
         stopAnalysisThread();
         synchronized (targetLock) {
             tracker.reset();

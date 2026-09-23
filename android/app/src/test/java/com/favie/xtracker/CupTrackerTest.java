@@ -270,6 +270,114 @@ public class CupTrackerTest {
         }
     }
 
+    /**
+     * A fast outer swap at only a few ticks used to scramble the letters.
+     *
+     * The prediction was {@code cup + velocity * missedTicks}, which omitted the tick
+     * being predicted: a just-matched cup was predicted back at its last observed
+     * position while a cup that had missed a frame was predicted forward by the full
+     * miss count. On the frame where all three cups coincide only one can be matched,
+     * so the other two froze and, when the cups separated, re-matched whichever cup
+     * was nearest their stale position. At four ticks per swap — a fast but entirely
+     * ordinary shuffle — the outer cups came out reading A B C instead of C B A, i.e.
+     * the two letters had swapped onto each other's cups.
+     *
+     * The identity of each cup, not just the order, is what has to survive, so this
+     * locks each cup in turn and checks where its letter ends up.
+     */
+    @Test
+    public void eachLettersIdentitySurvivesAFastOuterSwap() {
+        for (int steps = 4; steps <= 24; steps++) {
+            int[] start = {120, 420, 720};
+            // The left and right cups trade places; the middle one stays.
+            double[] end = {720, 420, 120};
+            for (int which = 0; which < 3; which++) {
+                CupTracker t = new CupTracker();
+                t.update(scene(start[0], start[1], start[2]), W, H);
+                t.lockAt(start[which] + CUP_W / 2f, CUP_Y + CUP_H / 2f);
+
+                for (int k = 1; k <= steps; k++) {
+                    double f = k / (double) steps;
+                    t.update(scene(
+                            (int) Math.round(start[0] + (end[0] - start[0]) * f),
+                            start[1],
+                            (int) Math.round(start[2] + (end[2] - start[2]) * f)), W, H);
+                }
+                for (int k = 0; k < 3; k++) {
+                    t.update(scene((int) end[0], (int) end[1], (int) end[2]), W, H);
+                }
+
+                CupTracker.TrackedCup held = t.getLockedCup();
+                assertNotNull("cup " + which + " must still be tracked at " + steps
+                        + " steps", held);
+                float expected = (float) end[which] + CUP_W / 2f;
+                assertTrue("cup " + which + " must end on its own destination at "
+                                + steps + " steps; expected " + expected + " but the letter "
+                                + held.label + " sat at " + held.cup.centerX(),
+                        Math.abs(held.cup.centerX() - expected) < CUP_W);
+            }
+        }
+    }
+
+    /**
+     * A circular rotation, where every cup moves, must also keep each identity on its
+     * own cup. The middle cup travelling too is what the outer-only swap never
+     * exercised.
+     */
+    @Test
+    public void eachLettersIdentitySurvivesARotation() {
+        for (int steps = 4; steps <= 24; steps++) {
+            double[] start = {120, 420, 720};
+            double[] end = {420, 720, 120};
+            for (int which = 0; which < 3; which++) {
+                CupTracker t = new CupTracker();
+                t.update(scene((int) start[0], (int) start[1], (int) start[2]), W, H);
+                t.lockAt((float) start[which] + CUP_W / 2f, CUP_Y + CUP_H / 2f);
+
+                for (int k = 1; k <= steps; k++) {
+                    double f = k / (double) steps;
+                    t.update(scene(
+                            (int) Math.round(start[0] + (end[0] - start[0]) * f),
+                            (int) Math.round(start[1] + (end[1] - start[1]) * f),
+                            (int) Math.round(start[2] + (end[2] - start[2]) * f)), W, H);
+                }
+                for (int k = 0; k < 3; k++) {
+                    t.update(scene((int) end[0], (int) end[1], (int) end[2]), W, H);
+                }
+
+                CupTracker.TrackedCup held = t.getLockedCup();
+                assertNotNull("cup " + which + " must still be tracked at " + steps
+                        + " steps", held);
+                float expected = (float) end[which] + CUP_W / 2f;
+                assertTrue("cup " + which + " must end on its own destination at "
+                                + steps + " steps; expected " + expected + " but the letter "
+                                + held.label + " sat at " + held.cup.centerX(),
+                        Math.abs(held.cup.centerX() - expected) < CUP_W);
+            }
+        }
+    }
+
+    /**
+     * The full readout has to carry every cup's own box, not only the order and the
+     * positions, because the on-screen letters are drawn from it. Each reported box
+     * must be the box of the cup whose letter it names.
+     */
+    @Test
+    public void readoutReportsEachCupsOwnBoxForTheOnScreenLetters() {
+        CupTracker t = new CupTracker();
+        t.update(scene(120, 420, 720), W, H);
+
+        CupTracker.ShuffleReadout readout = t.readout(W);
+        assertEquals(3, readout.cups.size());
+        for (int i = 0; i < readout.cups.size(); i++) {
+            CupTracker.CupTruth truth = readout.cups.get(i);
+            assertEquals("the letters must be in reading order",
+                    readout.order.split(" ")[i], truth.label);
+            assertEquals("the box must belong to the named cup",
+                    readout.positions[i], truth.cup.centerX() / W, 1e-3f);
+        }
+    }
+
     /** A frame with no cups must produce an empty readout, not a stale one. */
     @Test
     public void readoutIsEmptyWhenNothingIsTracked() {
